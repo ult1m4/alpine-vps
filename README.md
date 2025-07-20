@@ -15,6 +15,7 @@ I made this to wrestle with my IONOS VPS not having a proper custom iso or KVM c
    dhclient <iface>        # or: udhcpc -i <iface>
 
 3. Prepare your SSH key on your local machine
+   ```bash
    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
 
 4. Copy your public key to the VPS
@@ -22,11 +23,14 @@ I made this to wrestle with my IONOS VPS not having a proper custom iso or KVM c
    (paste the contents of ~/.ssh/id_ed25519.pub into /root/id_ed25519.pub)
 
 5. Fetch and make the bootstrap script executable
+   ```bash
    wget -O alpine-bootstrap.sh https://raw.githubusercontent.com/ult1m4/alpine-vps/main/alpine-bootstrap.sh
    chmod +x alpine-bootstrap.sh
 
 6. Run the installer script (double check lsblk to verify you're at /dev/vda)
+   ```bash
    ./alpine-bootstrap.sh /dev/vda /root/id_ed25519.pub
 
 7. Wait for the VPS to reboot, then log in over SSH
+   ```bash
    ssh root@<VPS_IP>
