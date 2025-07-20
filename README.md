@@ -38,10 +38,18 @@ VPS providers may lock you into their own images. This script allows you to reim
    #standard:
    ./alpine-bootstrap.sh -t standard /dev/vda /root/id_ed25519.pub
 
-9. Allow install to complete. After reboot, log in over SSH
+9. Allow install to complete and reboot.
+   If your VPS is similar to mine, it will still boot into GParted. Go ahead and do that. At this point, if you'd like to install GRUB to make Alpine our primary boot, re-enter a terminal in gparted (empty is fine):
    ```bash
-   ssh root@<VPS_IP>
+   mount /dev/vda2 /mnt/alpine
+   mount /dev/vda1 /mnt/alpine/boot
+   chroot /mnt/alpine
+   apk add grub
+   grub-install /dev/vda
+   grub-mkconfig -o /boot/grub/grub.cfg
 
+10. Now reboot again and you should have a functioning Alpine system, with your ssh key present.
+    
 # Feature Set
 
     ISO flavor flag (-t virt / -t standard)
