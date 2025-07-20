@@ -3,7 +3,7 @@
 # alpine-install.sh – installs Alpine Linux on GPT+BIOS using GRUB
 #
 # Usage:   ./alpine-install.sh [-t virt|standard] <disk> <ssh-pubkey>
-# Example: ./alpine-install.sh -t virt /dev/vda ~/.ssh/id_rsa.pub
+# Example: ./alpine-install.sh -t virt /dev/vda ~/.ssh/id_ed25519.pub
 #
 # Requires host tools: wget, sgdisk, mkfs.ext4, mount, tar, dd,
 #                      partprobe, lsblk, blockdev, gpg
@@ -243,15 +243,18 @@ $PART_ROOT / ext4 defaults 0 1
 $PART_BOOT /boot ext4 defaults 0 2
 F
 
-# networking
-IF=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -1)
-[ -z "$IF" ] && { echo "WARN: No network interface found, defaulting to eth0" >&2; IF=eth0; }
-cat > /etc/network/interfaces <<N
+  # Networking: pick first non-loopback interface or default to eth0
+  IF=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -v lo | head -1 || true)
+  if [ -z "$IF" ]; then
+    echo "WARN: No network interface found, defaulting to eth0" >&2
+    IF=eth0
+  fi
+  cat > /etc/network/interfaces <<N
 auto lo
 iface lo inet loopback
 
-auto $IF
-iface $IF inet dhcp
+auto \$IF
+iface \$IF inet dhcp
 N
 
 # ssh keys
