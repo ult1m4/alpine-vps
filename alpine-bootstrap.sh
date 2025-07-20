@@ -194,8 +194,9 @@ mkfs.ext4 -F "$PART1" || ERROR "/boot format failed"
 mkfs.ext4 -F "$PART2" || ERROR "root format failed"
 
 LOG "Mounting partitions…"
-mkdir -p "$CHROOT/boot"
+mkdir -p "$CHROOT"
 mount "$PART2" "$CHROOT"    || ERROR "Mount root failed"
+mkdir -p "$CHROOT/boot"
 mount "$PART1" "$CHROOT/boot"|| ERROR "Mount boot failed"
 
 # -------------------------------------------------------------------
