@@ -210,17 +210,21 @@ KERNEL_PKG="linux-virt"
 
 LOG "Configuring in chroot and installing GRUB"
 chroot "$CHROOT" /bin/sh -eux <<EOF
-# /etc/apk/repositories
-echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" > /etc/apk/repositories
+# repos
+echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" \
+  > /etc/apk/repositories
 
-# /etc/fstab
+# fstab
 cat > /etc/fstab <<FSTAB
 $PART_ROOT /      ext4 defaults 0 1
 $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
-# Networking as before…
-IF=\$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -v lo | head -1)
+# networking (DHCP)
+IF=\$(ip -o link show 2>/dev/null \
+      | awk -F': ' '{print \$2}' \
+      | grep -v lo \
+      | head -1)
 IF=\${IF:-eth0}
 echo "INFO: Using interface '\$IF'" >&2
 cat > /etc/network/interfaces <<NETCFG
@@ -231,7 +235,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# SSH keys…
+# SSH root login keys
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -239,28 +243,37 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# Make sure the grub defaults directory exists
+# Ensure /etc/default exists
 mkdir -p /etc/default
 
-# Pin root by UUID in one go (extract via sed to avoid BusyBox quirks)
-ROOT_UUID=\$(blkid "$PART_ROOT" | sed -n 's/.*UUID="\\([^"]*\\)".*/\\1/p')
+# Pin root by PARTUUID (avoids UUID/blkid quirks)
+PARTUUID=\$(blkid -s PARTUUID -o value "$PART_ROOT")
 cat > /etc/default/grub <<GRUBCFG
-GRUB_CMDLINE_LINUX_DEFAULT="root=UUID=\$ROOT_UUID quiet"
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=1
+GRUB_TIMEOUT_STYLE=menu
+GRUB_CMDLINE_LINUX="root=PARTUUID=\$PARTUUID quiet"
+GRUB_DISABLE_OS_PROBER=true
+GRUB_TERMINAL=console
+GRUB_DISABLE_SUBMENU=true
+GRUB_GFXPAYLOAD_LINUX=keep
+GRUB_PRELOAD_MODULES="part_gpt part_msdos"
 GRUBCFG
 
 # Install kernel + GRUB
 apk update
 apk add "$KERNEL_PKG" grub grub-bios
 
-# Install GRUB and rebuild config
-grub-install "$DISK" > /tmp/grub-install.log 2>&1 \
-  || { cat /tmp/grub-install.log >&2; exit 1; }
-grub-mkconfig -o /boot/grub/grub.cfg || { echo "grub-mkconfig failed" >&2; exit 1; }
+# Install GRUB & regenerate config
+grub-install "$DISK" > /tmp/grub.log 2>&1 \
+  || { cat /tmp/grub.log >&2; exit 1; }
+grub-mkconfig -o /boot/grub/grub.cfg \
+  || { echo "grub-mkconfig failed" >&2; exit 1; }
 
 # Sanity check
-[ -s /boot/grub/grub.cfg ] || { echo "GRUB config missing!" >&2; exit 1; }
+[ -s /boot/grub/grub.cfg ] \
+  || { echo "GRUB config missing!" >&2; exit 1; }
 EOF
-
 
 #------------------------------------------------------------------------------
 # 8) Cleanup & reboot
