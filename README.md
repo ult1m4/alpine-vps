@@ -54,7 +54,7 @@ VPS providers may lock you into their own images. This script allows you to reim
    mount --bind /sys  /mnt/alpine/sys
    cp /etc/resolv.conf /mnt/alpine/etc/resolv.conf
 ```
-9.3 Chroot in and install GRUB
+9.3) Chroot in and install GRUB
    ```bash
    chroot /mnt/alpine /bin/sh -eux <<EOF
    apk update
@@ -63,7 +63,7 @@ VPS providers may lock you into their own images. This script allows you to reim
    grub-mkconfig -o /boot/grub/grub.cfg
    EOF
 ```
-9.4 Clean up and reboot
+9.4) Clean up and reboot
    ```bash
    umount /mnt/alpine/{dev,proc,sys,boot}
    umount /mnt/alpine
