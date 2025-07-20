@@ -219,11 +219,8 @@ $PART_ROOT /      ext4 defaults 0 1
 $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
-# Networking
-IF=\$(ip -o link show 2>/dev/null \
-      | awk -F': ' '{print \$2}' \
-      | grep -v lo \
-      | head -1)
+# Networking as before…
+IF=\$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -v lo | head -1)
 IF=\${IF:-eth0}
 echo "INFO: Using interface '\$IF'" >&2
 cat > /etc/network/interfaces <<NETCFG
@@ -234,7 +231,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# SSH authorized_keys
+# SSH keys…
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -242,14 +239,14 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# Ensure /etc/default exists for our GRUB tweak
+# Make sure the grub defaults directory exists
 mkdir -p /etc/default
 
-# Pin root by UUID so initramfs never drops to an emergency shell
-# (BusyBox blkid prints full device info, so we sed out just the UUID)
+# Pin root by UUID in one go (extract via sed to avoid BusyBox quirks)
 ROOT_UUID=\$(blkid "$PART_ROOT" | sed -n 's/.*UUID="\\([^"]*\\)".*/\\1/p')
-echo "GRUB_CMDLINE_LINUX_DEFAULT=\"root=UUID=\$ROOT_UUID quiet\"" \
-  >> /etc/default/grub
+cat > /etc/default/grub <<GRUBCFG
+GRUB_CMDLINE_LINUX_DEFAULT="root=UUID=\$ROOT_UUID quiet"
+GRUBCFG
 
 # Install kernel + GRUB
 apk update
@@ -263,6 +260,7 @@ grub-mkconfig -o /boot/grub/grub.cfg || { echo "grub-mkconfig failed" >&2; exit 
 # Sanity check
 [ -s /boot/grub/grub.cfg ] || { echo "GRUB config missing!" >&2; exit 1; }
 EOF
+
 
 #------------------------------------------------------------------------------
 # 8) Cleanup & reboot
