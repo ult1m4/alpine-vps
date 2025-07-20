@@ -31,11 +31,10 @@ DISK=$1
 PUBKEY_FILE=$2
 
 #------------------------------------------------------------------------------
-# Pre-flight checks
+# Pre-flight checks (host tools)
 #------------------------------------------------------------------------------
-for cmd in wget sgdisk mkfs.ext4 mount tar extlinux dd partprobe lsblk blockdev \
-           gpg apk; do
-  command -v "$cmd" >/dev/null 2>&1 || ERROR "Missing required tool: $cmd"
+for cmd in wget sgdisk mkfs.ext4 mount tar extlinux dd partprobe lsblk blockdev gpg; do
+  command -v "$cmd" >/dev/null 2>&1 || ERROR "Missing required host tool: $cmd"
 done
 
 [ -b "$DISK" ]        || ERROR "Block device '$DISK' not found"
@@ -53,15 +52,11 @@ PART_BOOT="${DISK}${PART_PREFIX}2"
 PART_ROOT="${DISK}${PART_PREFIX}3"
 
 LOG "Ensuring no part of $DISK is mounted"
-# Unmount any leftovers
 umount -l "$ISO_MNT"           2>/dev/null || true
 umount -l "$CHROOT"/*          2>/dev/null || true
 
-# Check via lsblk if any MOUNTPOINT exists on disk or its partitions
-MOUNTS=$(lsblk -n -o MOUNTPOINT "$DISK" \
-               "$PART_BIOS" \
-               "$PART_BOOT" \
-               "$PART_ROOT" \
+# Check via lsblk if any mountpoints exist on disk or partitions
+MOUNTS=$(lsblk -n -o MOUNTPOINT "$DISK" "$PART_BIOS" "$PART_BOOT" "$PART_ROOT" \
          | grep -v '^$' || true)
 [ -z "$MOUNTS" ] || ERROR "Some partitions on $DISK are mounted; unmount them first."
 
@@ -138,7 +133,7 @@ sgdisk --mbrtogpt       "$DISK"
 sgdisk -n1:1MiB:+1MiB   -t1:EF02 -c1:"BIOS-GRUB" "$DISK"
 # 256MiB /boot
 sgdisk -n2:0:+256MiB    -t2:8300 -c2:"alpine-boot" "$DISK"
-# Remaining / 
+# Remaining /
 sgdisk -n3:0:0          -t3:8300 -c3:"alpine-root" "$DISK"
 partprobe "$DISK"
 
@@ -231,7 +226,7 @@ done
 umount "$CHROOT/boot" 2>/dev/null || true
 umount "$CHROOT"      2>/dev/null || true
 
-# Force unmount leftovers in reverse order
+# Force-unmount any lingering mounts in reverse order
 if mount | grep -q "$CHROOT"; then
   WARN "Some mounts remained; forcing unmount"
   umount -f "$CHROOT/sys" "$CHROOT/proc" "$CHROOT/dev" \
