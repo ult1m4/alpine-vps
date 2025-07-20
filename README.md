@@ -1,13 +1,13 @@
 # alpine linux vps bootstrapper (chroot install)
-Script set and guide for installing Alpine Linux on VPS and cloud services that do not provide custom ISO uploads
+Script and guide for installing Alpine Linux on VPS or cloud servers without custom-ISO support.
 
 # why
-I made this to wrestle with my IONOS VPS not having a proper custom iso or KVM console. I discovered it runs its gparted image as a bootable drive and doesn't hard write it to the /dev/vda which, when imaging with gparted, would let me take proper control of the system.
+VPS providers may lock you into their own images. This script allows you to reimage a disk from friendly GParted Live iso (available on providers like IONOS) into Alpine Linux entirely from a chroot.
 
 # how
 
-1. Boot your IONOS VPS into the GParted Live ISO  
-   - In the menu, choose “Enter command line prompt” - you could also do it in the GUI, your choice
+1. Boot your VPS into the GParted Live ISO
+   - In the menu, choose “Enter command line prompt” (or use the GUI terminal).
 
 2. Bring up networking  
    ```bash
@@ -19,18 +19,42 @@ I made this to wrestle with my IONOS VPS not having a proper custom iso or KVM c
    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
 
 4. Copy your public key to the VPS
-   If you can't scp it since it's gparted just painstakingly copy it, doing a temporary private github gist to wget might be a clever way if you can't access clipboard
-   (paste the contents of ~/.ssh/id_ed25519.pub into /root/id_ed25519.pub)
+   Paste ~/.ssh/id_ed25519.pub into /root/id_ed25519.pub on the GParted shell.
+   Tip: use a private Gist and wget if clipboard isn’t working.
 
-5. Fetch and make the bootstrap script executable
+6. Download and make the bootstrap script executable
    ```bash
    wget -O alpine-bootstrap.sh https://raw.githubusercontent.com/ult1m4/alpine-vps/main/alpine-bootstrap.sh
    chmod +x alpine-bootstrap.sh
 
-6. Run the installer script (double check lsblk to verify you're at /dev/vda)
+7. Run the installer (use lsblk or gparted to find /dev/vda or device name)
+   Default (add -t flag if you rather Alpine standard ISO over virtual machine ISO):
    ```bash
+   #virt:
    ./alpine-bootstrap.sh /dev/vda /root/id_ed25519.pub
+   #standard:
+   ./alpine-bootstrap.sh -t standard /dev/vda /root/id_ed25519.pub
 
-7. Wait for the VPS to reboot, then log in over SSH
+9. Allow install to complete. After reboot, log in over SSH
    ```bash
    ssh root@<VPS_IP>
+
+# Feature Set
+
+    ISO flavor flag (-t virt / -t standard)
+
+    Auto-detect NVMe (/dev/nvme*) vs classic disks
+
+    Minimum disk size check (≥ 512 MB)
+
+    Auto-sized /boot partition (min 256 MB, max 5% or 512 MB)
+
+    Cache-aware, live-feedback ISO download of the latest Alpine release
+
+    SHA256 + GPG signature verification
+
+    Tiny apk-tools-static fetch & extract (no 1 GB extended ISO)
+
+    Full chroot bootstrap of Alpine with alpine-base, linux-virt, syslinux, openssh, e2fsprogs
+
+    Verbose logging, strict error handling, and clean cleanup/reboot steps
