@@ -41,23 +41,19 @@ VPS providers may lock you into their own images. This script allows you to reim
 8. Allow install to complete and reboot. You should have a functioning Alpine system, with your ssh key present.
     
 # Feature Set
+```
+   ISO Flavor Selection Choose between “virt” or “standard” builds via -t, automatically fetching the latest Alpine ISO.
 
-    ISO flavor flag (-t virt / -t standard)
+   Smart Disk Setup Auto-detects NVMe vs classic disks, wipes existing RAID/LVM metadata, and partitions for BIOS+GRUB: BIOS-GRUB, 256 MiB /boot, rest /.
 
-    Auto-detect NVMe (/dev/nvme*) vs classic disks
+   Robust Download & Verification Live‐progress ISO pulls with retries, SHA256 checksum and GPG signature checks ensure a tamper-proof base.
 
-    Minimum disk size check (≥ 512 MB)
+   Minimal Apk-tools-static Bootstrap Fetches just the apk-tools-static package from Alpine’s main repo—no huge ISOs—then bootstraps alpine-base cleanly in chroot.
 
-    Auto-sized /boot partition (min 256 MB, max 5% or 512 MB)
+   Automated Chroot Configuration Sets up /etc/fstab, networking (DHCP), SSH authorized_keys, and installs linux-virt (or LTS), grub, and essential packages.
 
-    Cache-aware, live-feedback ISO download of the latest Alpine release
+   Real GRUB Bootloader Installs and configures GRUB (not Syslinux) for a solid, BIOS-bootable system—no MBR hacks or “hope-it-boots” tricks.
 
-    SHA256 + GPG signature verification
+   Defensive, POSIX-Compatible Scripting Strict set -euo pipefail, comprehensive mount checks, retry loops, and cleanup ensure reproducible runs even in rescue shells.
 
-    Tiny apk-tools-static fetch & extract (no 1 GB extended ISO)
-
-    Full chroot bootstrap of Alpine with alpine-base, linux-virt, syslinux, openssh, e2fsprogs
-
-    Verbose logging, strict error handling, and clean cleanup/reboot steps
-
-✅ It partitions the disk correctly for BIOS boot ✅ It installs a real bootloader (GRUB), not Syslinux sloppily hoping for MBR magic ✅ It sets up networking, SSH, and kernel without leaving any post-install TODOs ✅ It exits the chroot cleanly, and if it doesn't, it drags it out ✅ It’s POSIX-compatible so it runs even on barebones rescue shells ✅ It checks mount status the right way (not just mount | grep) ✅ It defaults sanely on interface and kernel, with warnings if things look off ✅ It’s future-proofed for expansion: you could add UEFI, other distros, or full automation flags later ✅ And most importantly, it boots 🧨
+   Clear Logging & Finalization Verbose timestamps, error context (including mount/GRUB logs), and safe reboot steps give you instant insight and a one-shot installation.
