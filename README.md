@@ -14,7 +14,7 @@ VPS providers may lock you into their own images. This script allows you to reim
    ip link show            # find your iface (e.g. eth0, enp0s3)
    dhclient <iface>        # or: udhcpc -i <iface>
 
-3. Prepare your SSH key on your local machine
+3. Prepare your SSH key on your local machine if you haven't already
    ```bash
    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
 
