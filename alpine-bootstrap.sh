@@ -211,7 +211,7 @@ KERNEL_PKG="linux-virt"
 apk update
 apk add "\$KERNEL_PKG" grub grub-bios
 
-# 7.7) Install GRUB to MBR and generate config
+# 7.7) Install GRUB to disk and generate config
 grub-install "$DISK"
 grub-mkconfig -o /boot/grub/grub.cfg
 EOF
@@ -234,7 +234,7 @@ if mount | grep -q "$CHROOT"; then
 fi
 
 LOG "Alpine Linux installation completed successfully!"
-LOG "Make sure your VPS is set to boot from $DISK (not PXE or rescue)."
+LOG "Ensure your VPS is set to boot from $DISK (not PXE or rescue mode)."
 
 LOG "Syncing and rebooting in 5 seconds..."
 sync; sleep 5
