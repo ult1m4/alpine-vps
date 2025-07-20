@@ -233,7 +233,7 @@ cp /etc/resolv.conf "$CHROOT/etc/resolv.conf" || ERROR "Copy resolv.conf failed"
 # 7) In-chroot configure & install GRUB
 #------------------------------------------------------------------------------
 LOG "Configuring in chroot + installing GRUB"
-chroot "$CHROOT" /bin/sh -eux <<'EOF'
+chroot "$CHROOT" /bin/sh -eux <<EOF
 # repos
 echo -e "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main\n" > /etc/apk/repositories
 
