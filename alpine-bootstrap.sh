@@ -5,8 +5,8 @@
 #
 # Usage:   ./alpine-install.sh [-t virt|standard] <disk> <ssh-pubkey>
 # Example: ./alpine-install.sh -t virt /dev/vda ~/.ssh/id_rsa.pub
-# Run this in a live environment with internet and required tools:
-# wget, sgdisk, mkfs.ext4, mount, tar, dd, partprobe, lsblk, blockdev, gpg.
+# Requires tools: wget, sgdisk, mkfs.ext4, mount, tar, dd,
+#                 partprobe, lsblk, blockdev, gpg.
 #----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -33,7 +33,7 @@ while getopts ":t:" opt; do
     \?) ERROR "Invalid option -$OPTARG" ;;
   esac
 done
-shift $((OPTIND-1))
+shift $((OPTIND - 1))
 
 [ $# -eq 2 ] || ERROR "Usage: $0 [-t virt|standard] <disk> <ssh-pubkey>"
 DISK=$1
@@ -53,7 +53,7 @@ PUBKEY=$(<"$PUBKEY_FILE")
 [ -n "$PUBKEY" ]      || ERROR "SSH pubkey file is empty"
 
 #------------------------------------------------------------------------------
-# Partition naming
+# Determine partition suffix (e.g., 'p' for NVMe)
 #------------------------------------------------------------------------------
 PART_PREFIX=""
 case "$DISK" in
@@ -64,20 +64,19 @@ PART_BOOT="${DISK}${PART_PREFIX}2"
 PART_ROOT="${DISK}${PART_PREFIX}3"
 
 #------------------------------------------------------------------------------
-# Ensure no mounts on the disk
+# 0) Clean up old mounts and check for LVM/RAID
 #------------------------------------------------------------------------------
-LOG "Checking mounts on $DISK"
+LOG "Cleaning up old mounts"
 umount -l "$ISO_MNT"      2>/dev/null || true
 umount -l "$CHROOT"/*     2>/dev/null || true
 
 MOUNTS=$(lsblk -n -o MOUNTPOINT \
-           "$DISK" "$PART_BIOS" "$PART_BOOT" "$PART_ROOT" \
-         | grep -v '^$' || true)
+  "$DISK" "$PART_BIOS" "$PART_BOOT" "$PART_ROOT" \
+  | grep -v '^$' || true)
 [ -z "$MOUNTS" ] || ERROR "Some partitions on $DISK are mounted; unmount first."
 
-# Warn if LVM/RAID metadata present
 if blkid -s TYPE -o value "$DISK" | grep -Eq '^(LVM|LVM2_member|linux_raid)'; then
-  WARN "Disk $DISK carries LVM/RAID metadata—this install will overwrite it!"
+  WARN "Disk $DISK carries LVM/RAID metadata—this will overwrite it!"
 fi
 
 echo
@@ -104,7 +103,7 @@ cd /root
 if [ -f "$LATEST" ]; then
   LOG "Reusing existing ISO: /root/$LATEST"
 else
-  LOG "Downloading ISO, checksums & GPG key (3 attempts)"
+  LOG "Downloading ISO, checksums & GPG key (up to 3 attempts)"
   attempts=1
   while [ "$attempts" -le 3 ]; do
     wget --progress=dot:giga \
@@ -114,7 +113,7 @@ else
       "https://alpinelinux.org/keys/ncopa.asc" && break
 
     if [ "$attempts" -lt 3 ]; then
-      LOG "Attempt $attempts failed, retrying in 5s..."
+      LOG "ISO download attempt $attempts failed, retrying in 5s..."
       sleep 5
     else
       ERROR "ISO download failed after 3 attempts"
@@ -157,7 +156,7 @@ APK_PKG=$(grep -Eo 'apk-tools-static-[0-9.]+(-r[0-9]+)?\.apk' "$IDX" \
            | sort -V \
            | tail -1)
 rm -f "$IDX"
-[ -n "$APK_PKG" ] || ERROR "apk-tools-static pkg not found in index"
+[ -n "$APK_PKG" ] || { APK_PKG="apk-tools-static-2.14.4.apk"; WARN "No apk-tools-static found in index, falling back to $APK_PKG"; }
 
 LOG "Downloading apk-tools-static: $APK_PKG"
 attempts=1
@@ -209,14 +208,16 @@ mkfs.ext4 -F "$PART_ROOT" || ERROR "mkfs.ext4 on $PART_ROOT failed"
 # 4) Mount new filesystems
 #------------------------------------------------------------------------------
 LOG "Mounting root and boot"
-mkdir -p "$CHROOT" "$CHROOT/boot"
-mount "$PART_ROOT" "$CHROOT"     || ERROR "Mount $PART_ROOT failed"
+mkdir -p "$CHROOT"
+mkdir -p "$CHROOT/boot"
+
+mount "$PART_ROOT" "$CHROOT"       || ERROR "Mount $PART_ROOT failed"
 mount "$PART_BOOT" "$CHROOT/boot" || ERROR "Mount $PART_BOOT failed"
 
 #------------------------------------------------------------------------------
 # 5) Bootstrap Alpine base
 #------------------------------------------------------------------------------
-LOG "Bootstrapping alpine-base"
+LOG "Bootstrapping Alpine base"
 "$APK_BIN" \
   --repository "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" \
   --allow-untrusted -U --root "$CHROOT" --initdb \
@@ -225,7 +226,7 @@ LOG "Bootstrapping alpine-base"
 #------------------------------------------------------------------------------
 # 6) Prepare chroot environment
 #------------------------------------------------------------------------------
-LOG "Bind-mounting /dev,/proc,/sys and copying DNS"
+LOG "Bind-mounting /dev, /proc, /sys and copying DNS"
 for d in dev proc sys; do
   mount --bind "/$d" "$CHROOT/$d" || ERROR "Bind mount $d failed"
 done
@@ -236,21 +237,21 @@ cp /etc/resolv.conf "$CHROOT/etc/resolv.conf" || ERROR "Copy resolv.conf failed"
 #------------------------------------------------------------------------------
 LOG "Configuring Alpine in chroot and installing GRUB"
 chroot "$CHROOT" /bin/sh -eux <<EOF
-# 7.1) Repositories
+# Repositories
 cat > /etc/apk/repositories <<REPOS
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/community
 REPOS
 
-# 7.2) fstab
+# fstab
 cat > /etc/fstab <<FSTAB
 $PART_ROOT /      ext4 defaults 0 1
 $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
-# 7.3) Networking (DHCP)
+# Networking (DHCP)
 IF=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
-[ -z "\$IF" ] && { WARN "No network interface found, defaulting to eth0"; IF=eth0; }
+[ -z "\$IF" ] && { echo "WARN: No network interface found, defaulting to eth0" >&2; IF=eth0; }
 cat > /etc/network/interfaces <<NETCFG
 auto lo
 iface lo inet loopback
@@ -259,7 +260,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# 7.4) SSH authorized_keys
+# SSH authorized_keys
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -267,20 +268,26 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# 7.5) Select kernel package
+# Select kernel package
 KERNEL_PKG="linux-virt"
 [ "\$ISO_TYPE" = "standard" ] && KERNEL_PKG="linux-lts"
 
-# 7.6) Install kernel + GRUB
+# Install kernel + GRUB
 apk update
 apk add "\$KERNEL_PKG" grub grub-bios
 
-# 7.7) Install GRUB & generate config
-grub-install "$DISK"
+# Install GRUB & generate config
+grub-install "$DISK" > /tmp/grub-install.log 2>&1 \
+  || { echo "GRUB installation failed" >&2; cat /tmp/grub-install.log >&2; exit 1; }
+cat > /etc/default/grub <<GRUBCFG
+GRUB_TIMEOUT=1
+GRUB_TIMEOUT_STYLE=menu
+GRUB_CMDLINE_LINUX_DEFAULT="quiet"
+GRUBCFG
 grub-mkconfig -o /boot/grub/grub.cfg
 
-# sanity check
-[ -f /boot/grub/grub.cfg ] || { echo "GRUB config missing" >&2; exit 1; }
+# Sanity check
+[ -s /boot/grub/grub.cfg ] || { echo "GRUB config is empty or missing" >&2; exit 1; }
 EOF
 
 #------------------------------------------------------------------------------
@@ -293,9 +300,8 @@ done
 umount "$CHROOT/boot" 2>/dev/null || true
 umount "$CHROOT"      2>/dev/null || true
 
-# force-unmount any leftovers
 if mount | grep -q "$CHROOT"; then
-  WARN "Forcing leftover unmounts"
+  WARN "Failed to unmount some filesystems. Reboot may leave system in an inconsistent state."
   umount -f "$CHROOT/sys" "$CHROOT/proc" "$CHROOT/dev" \
         "$CHROOT/boot" "$CHROOT" 2>/dev/null || true
 fi
@@ -305,6 +311,7 @@ LOG "Alpine Linux installation completed successfully!"
 LOG "CRITICAL: After reboot, configure your provider to boot from $DISK."
 LOG "If you return to PXE/rescue, double-check boot order or force $DISK."
 LOG "Debug info and grub.cfg live in /boot/grub/grub.cfg on the new system."
+LOG "After reboot, verify networking. If interface ($IF) fails, run 'ip link' and edit /etc/network/interfaces."
 
 LOG "Syncing & rebooting in 5 seconds..."
 sync; sleep 5
