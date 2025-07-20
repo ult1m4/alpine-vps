@@ -25,8 +25,8 @@ shift $((OPTIND-1))
 
 # Usage
 if [ $# -ne 2 ]; then
-  ERROR "Usage: $0 [-t virt|standard] <disk> <ssh-pubkey-file>\n"\
-        "Example: $0 -t virt /dev/vda /root/id_ed25519.pub"
+  ERROR "Usage: $0 [-t virt|standard] <disk> <ssh-pubkey-file>
+Example: $0 -t virt /dev/vda /root/id_ed25519.pub"
 fi
 
 DISK="$1"
@@ -38,10 +38,10 @@ for cmd in wget sgdisk mkfs.ext4 mount tar extlinux dd partprobe lsblk blockdev 
 done
 
 # Validate inputs
-[ -b "$DISK" ] || ERROR "Block device $DISK not found. Check with 'lsblk'."
-[ -f "$PUBKEY_FILE" ]    || ERROR "SSH pubkey file $PUBKEY_FILE not found."
+[ -b "$DISK" ]    || ERROR "Block device $DISK not found. Check with 'lsblk'."
+[ -f "$PUBKEY_FILE" ] || ERROR "SSH pubkey file $PUBKEY_FILE not found."
 PUBKEY=$(cat "$PUBKEY_FILE")
-[ -n "$PUBKEY" ]         || ERROR "SSH pubkey file is empty."
+[ -n "$PUBKEY" ]  || ERROR "SSH pubkey file is empty."
 
 # Derive partition suffix (nvme uses 'p')
 PART_PREFIX=""
@@ -62,7 +62,7 @@ for part in "${DISK}${PART_PREFIX}"*; do
 done
 
 # Cleanup old mounts/data
-umount -l "$ISO_MNT"          2>/dev/null || true
+umount -l "$ISO_MNT"            2>/dev/null || true
 umount -l "$CHROOT"/{dev,proc,sys,boot,} 2>/dev/null || true
 rm -rf "$CHROOT" "$ISO_MNT"
 
@@ -107,13 +107,12 @@ else
   LOG "Downloading $LATEST..."
   wget --progress=dot:giga \
     "$ISO_URL" "$ISO_URL.sha256" "$ISO_URL.asc" \
-    "https://alpinelinux.org/keys/ncopa.asc" \
-    || ERROR "Download failed"
+    "https://alpinelinux.org/keys/ncopa.asc" || ERROR "Download failed"
 fi
 
 LOG "Verifying ISO..."
-sha256sum -c "${LATEST}.sha256" || ERROR "Checksum failed"
-gpg --import ncopa.asc    2>/dev/null || ERROR "GPG import failed"
+sha256sum -c "${LATEST}.sha256"  || ERROR "Checksum failed"
+gpg --import ncopa.asc        2>/dev/null || ERROR "GPG import failed"
 gpg --verify "${LATEST}.asc" "$LATEST" 2>/dev/null || ERROR "Signature failed"
 
 # -------------------------------------------------------------------
@@ -123,17 +122,18 @@ mkdir -p "$ISO_MNT"
 mount -o loop "/root/$LATEST" "$ISO_MNT" || ERROR "Mount failed"
 
 LOG "Fetching latest apk-tools-static (~2 MB)…"
-APK_PKG=$(wget --progress=dot:giga -qO- \
+TMP_INDEX="/tmp/index.html"
+wget --progress=dot:giga -O "$TMP_INDEX" \
   https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/ \
-  | grep -o 'apk-tools-static-[0-9.]\+\.apk' \
-  | sort -V \
-  | tail -n1)
+  || ERROR "Failed to fetch package index"
+APK_PKG=$(cat "$TMP_INDEX" | grep -o 'apk-tools-static-[0-9.]\+[-r0-9]*\.apk' | sort -V | tail -n1)
+rm -f "$TMP_INDEX"
 [ -n "$APK_PKG" ] || ERROR "Could not find apk-tools-static package name"
+echo "DEBUG: Downloading $APK_PKG" >&2
 
 wget --progress=dot:giga \
   "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/${APK_PKG}" \
-  -O "/root/${APK_PKG}" \
-  || ERROR "Failed to download apk-tools-static"
+  -O "/root/${APK_PKG}" || ERROR "Failed to download apk-tools-static"
 
 mkdir -p /root/sbin
 LOG "Extracting apk.static…"
@@ -152,8 +152,7 @@ mkdir -p "$CHROOT"
 "$APK_STATIC" \
   --repository "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" \
   --allow-untrusted -U --root "$CHROOT" --initdb \
-  add alpine-base linux-virt syslinux e2fsprogs openssh \
-  || ERROR "Bootstrap failed"
+  add alpine-base linux-virt syslinux e2fsprogs openssh || ERROR "Bootstrap failed"
 
 # -------------------------------------------------------------------
 # 4) Bind mounts + resolv
@@ -188,8 +187,7 @@ LOG "Wiping & partitioning $DISK…"
 sgdisk --zap-all "$DISK" \
   && sgdisk -n1:0:+${BOOT_SIZE_MB}M -t1:8300 "$DISK" \
   && sgdisk -n2:0:0          -t2:8300 "$DISK" \
-  && partprobe "$DISK" \
-  || ERROR "Partitioning failed"
+  && partprobe "$DISK" || ERROR "Partitioning failed"
 
 LOG "Formatting partitions…"
 mkfs.ext4 -F "$PART1" || ERROR "/boot format failed"
@@ -262,8 +260,8 @@ LOG "Cleaning up mounts…"
 for d in dev proc sys; do
   umount "$CHROOT/$d" 2>/dev/null || WARN "Could not unmount $d"
 done
-umount "$CHROOT/boot" 2>/dev/null || WARN "Could not unmount boot"
-umount "$CHROOT"      2>/dev/null || WARN "Could not unmount root"
+umount "$CHROOT/boot" 2>/dev/null    || WARN "Could not unmount boot"
+umount "$CHROOT"       2>/dev/null    || WARN "Could not unmount root"
 
 LOG "Syncing and rebooting in 5s…"
 sync
