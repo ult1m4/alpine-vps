@@ -190,26 +190,26 @@ mkfs.ext4 -F "$PART_ROOT" || ERROR "mkfs.ext4 $PART_ROOT failed"
 #------------------------------------------------------------------------------
 # 4) Mount new filesystems
 #------------------------------------------------------------------------------
-LOG "Mounting root and boot"
-mkdir -p "$CHROOT" "$CHROOT/boot"
-[ -d "$CHROOT" ]       || ERROR "Failed to create $CHROOT"
-[ -d "$CHROOT/boot" ]  || ERROR "Failed to create $CHROOT/boot"
+LOG "Mounting root filesystem"
+# 1) ensure chroot dir
+mkdir -p "$CHROOT"
+[ -d "$CHROOT" ] || ERROR "Failed to create $CHROOT"
 
-LOG "Checking devices before mount: $PART_ROOT, $PART_BOOT"
-[ -b "$PART_ROOT" ]    || ERROR "Partition $PART_ROOT not found"
-[ -b "$PART_BOOT" ]    || ERROR "Partition $PART_BOOT not found"
+# 2) mount root
+mount "$PART_ROOT" "$CHROOT" || ERROR "Mount $PART_ROOT failed: $(mount)"
+
+# 3) create boot dir inside the freshly-mounted root
+LOG "Creating /boot inside new root"
+mkdir -p "$CHROOT/boot"
+[ -d "$CHROOT/boot" ] || ERROR "Failed to create $CHROOT/boot"
+
+# 4) now mount the boot partition
+LOG "Mounting boot partition"
+mount "$PART_BOOT" "$CHROOT/boot" || ERROR "Mount $PART_BOOT failed: $(mount)"
 
 ## debug: show mountpoint directories (and save to a log for post-mortem)
 ls -ld "$(dirname "$CHROOT")" "$CHROOT" "$CHROOT/boot" \
   | tee /tmp/mount-debug.log
-
-mount "$PART_ROOT" "$CHROOT"       || { \
-    echo "Mount-point detail:"; cat /tmp/mount-debug.log >&2; \
-    ERROR "Mount $PART_ROOT failed: $(mount)"; }
-
-mount "$PART_BOOT" "$CHROOT/boot"  || { \
-    echo "Mount-point detail:"; cat /tmp/mount-debug.log >&2; \
-    ERROR "Mount $PART_BOOT failed: $(mount)"; }
 
 #------------------------------------------------------------------------------
 # 5) Bootstrap Alpine base
