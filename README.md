@@ -41,7 +41,7 @@ VPS providers may lock you into their own images. This script allows you to reim
 8. Allow install to complete and reboot. You should have a functioning Alpine system, with your ssh key present.
     
 # Feature Set
-```
+
    ISO Flavor Selection Choose between “virt” or “standard” builds via -t, automatically fetching the latest Alpine ISO.
 
    Smart Disk Setup Auto-detects NVMe vs classic disks, wipes existing RAID/LVM metadata, and partitions for BIOS+GRUB: BIOS-GRUB, 256 MiB /boot, rest /.
