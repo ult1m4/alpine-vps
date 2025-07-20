@@ -51,20 +51,20 @@ echo "Type 'yes' to proceed, anything else to abort."
 read -r confirm
 [ "$confirm" != "yes" ] && ERROR "Aborted by user."
 
-# Fetch latest Alpine standard ISO
-LOG "Fetching latest Alpine standard ISO name..."
+# Fetch latest Alpine extended ISO
+LOG "Fetching latest Alpine extended ISO name..."
 LISTING="https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/"
 LATEST=$(wget -qO- "$LISTING" 2>/tmp/wget_err \
-  | grep -o 'alpine-standard-[0-9.]\+-x86_64.iso' \
+  | grep -o 'alpine-extended-[0-9.]\+-x86_64.iso' \
   | grep -v '_rc' \
   | sort -V \
   | tail -n1)
 if [ -z "$LATEST" ]; then
-  WARN "Failed to find latest standard ISO in directory listing."
+  WARN "Failed to find latest extended ISO in directory listing."
   cat /tmp/wget_err >&2
   ERROR "Could not fetch latest Alpine ISO. Check network or CDN."
 fi
-VERSION=$(echo "$LATEST" | sed 's/alpine-standard-\([0-9.]\+\)-x86_64.iso/\1/')
+VERSION=$(echo "$LATEST" | sed 's/alpine-extended-\([0-9.]\+\)-x86_64.iso/\1/')
 ISO_URL="$LISTING$LATEST"
 SHA256_URL="$LISTING${LATEST}.sha256"
 ASC_URL="$LISTING${LATEST}.asc"
