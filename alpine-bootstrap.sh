@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+#----------------------------------------------------------------------------
+# alpine-install.sh: installs Alpine Linux on a GPT disk with BIOS-GRUB
+# Overrides PXE/rescue boot on most VPS providers (e.g., IONOS).
+#
+# Usage:   ./alpine-install.sh [-t virt|standard] <disk> <ssh-pubkey>
+# Example: ./alpine-install.sh -t virt /dev/vda ~/.ssh/id_rsa.pub
+# Run this in a live environment with internet and required tools:
+# wget, sgdisk, mkfs.ext4, mount, tar, dd, partprobe, lsblk, blockdev, gpg.
+#----------------------------------------------------------------------------
+
 set -euo pipefail
 
 #------------------------------------------------------------------------------
@@ -9,11 +19,12 @@ WARN()  { echo "[$(date +%H:%M:%S)] WARN: $*" >&2; }
 ERROR() { echo "[$(date +%H:%M:%S)] ERROR: $*" >&2; exit 1; }
 
 #------------------------------------------------------------------------------
-# Defaults & args
+# Defaults & argument parsing
 #------------------------------------------------------------------------------
 ISO_TYPE="virt"       # "virt" or "standard"
 CHROOT="/mnt/alpine"
 ISO_MNT="/mnt/iso"
+
 while getopts ":t:" opt; do
   case $opt in
     t) [[ $OPTARG =~ ^(virt|standard)$ ]] \
@@ -29,10 +40,11 @@ DISK=$1
 PUBKEY_FILE=$2
 
 #------------------------------------------------------------------------------
-# Pre-flight (host-side tools)
+# Pre-flight checks (host-side tools)
 #------------------------------------------------------------------------------
-for cmd in wget sgdisk mkfs.ext4 mount tar extlinux dd partprobe lsblk blockdev gpg; do
-  command -v "$cmd" >/dev/null 2>&1 || ERROR "Missing host tool: $cmd"
+for cmd in wget sgdisk mkfs.ext4 mount tar dd partprobe lsblk blockdev gpg; do
+  command -v "$cmd" >/dev/null 2>&1 \
+    || ERROR "Missing required host tool: $cmd"
 done
 
 [ -b "$DISK" ]        || ERROR "Block device '$DISK' not found"
@@ -40,44 +52,59 @@ done
 PUBKEY=$(<"$PUBKEY_FILE")
 [ -n "$PUBKEY" ]      || ERROR "SSH pubkey file is empty"
 
-# NVMe partition suffix
+#------------------------------------------------------------------------------
+# Partition naming
+#------------------------------------------------------------------------------
 PART_PREFIX=""
-case "$DISK" in /dev/nvme*) PART_PREFIX="p" ;; esac
+case "$DISK" in
+  /dev/nvme*) PART_PREFIX="p" ;;
+esac
 PART_BIOS="${DISK}${PART_PREFIX}1"
 PART_BOOT="${DISK}${PART_PREFIX}2"
 PART_ROOT="${DISK}${PART_PREFIX}3"
 
-LOG "Ensuring $DISK isn't in use"
-umount -l "$ISO_MNT" 2>/dev/null || true
-umount -l "$CHROOT"/* 2>/dev/null   || true
-MOUNTS=$(lsblk -n -o MOUNTPOINT "$DISK" "$PART_BIOS" "$PART_BOOT" "$PART_ROOT" \
+#------------------------------------------------------------------------------
+# Ensure no mounts on the disk
+#------------------------------------------------------------------------------
+LOG "Checking mounts on $DISK"
+umount -l "$ISO_MNT"      2>/dev/null || true
+umount -l "$CHROOT"/*     2>/dev/null || true
+
+MOUNTS=$(lsblk -n -o MOUNTPOINT \
+           "$DISK" "$PART_BIOS" "$PART_BOOT" "$PART_ROOT" \
          | grep -v '^$' || true)
-[ -z "$MOUNTS" ] || ERROR "Some partitions on $DISK are still mounted"
+[ -z "$MOUNTS" ] || ERROR "Some partitions on $DISK are mounted; unmount first."
+
+# Warn if LVM/RAID metadata present
+if blkid -s TYPE -o value "$DISK" | grep -Eq '^(LVM|LVM2_member|linux_raid)'; then
+  WARN "Disk $DISK carries LVM/RAID metadata—this install will overwrite it!"
+fi
 
 echo
 LOG "WARNING: This will ERASE ALL DATA on $DISK and install Alpine Linux."
 read -p "Type 'yes' to proceed: " confirm
-[ "$confirm" = "yes" ] || ERROR "Aborted by user"
+[ "$confirm" = "yes" ] || ERROR "Aborted by user."
 
 #------------------------------------------------------------------------------
-# 1) Download & verify ISO
+# 1) Download & verify Alpine ISO
 #------------------------------------------------------------------------------
-LOG "Picking Alpine $ISO_TYPE ISO"
+LOG "Selecting Alpine $ISO_TYPE ISO"
 BASE="https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/"
 PATTERN="alpine-${ISO_TYPE}-[0-9.]+-x86_64.iso"
+
 LATEST=$(wget -qO- "$BASE" \
-         | grep -Eo "$PATTERN" \
-         | grep -v rc \
-         | sort -V \
-         | tail -1)
+  | grep -Eo "$PATTERN" \
+  | grep -v rc \
+  | sort -V \
+  | tail -1)
 [ -n "$LATEST" ] || ERROR "Could not find Alpine $ISO_TYPE ISO"
-ISO_URL="$BASE$LATEST"
+ISO_URL="${BASE}${LATEST}"
 
 cd /root
 if [ -f "$LATEST" ]; then
-  LOG "Reusing ISO: $LATEST"
+  LOG "Reusing existing ISO: /root/$LATEST"
 else
-  LOG "Downloading ISO + checksums + GPG key (up to 3 tries)"
+  LOG "Downloading ISO, checksums & GPG key (3 attempts)"
   attempts=1
   while [ "$attempts" -le 3 ]; do
     wget --progress=dot:giga \
@@ -86,63 +113,102 @@ else
       "$ISO_URL.asc" \
       "https://alpinelinux.org/keys/ncopa.asc" && break
 
-    [ "$attempts" -lt 3 ] \
-      && { LOG "Attempt $attempts failed, retrying in 5s…"; sleep 5; } \
-      || ERROR "Download failed after 3 attempts"
-    attempts=$((attempts+1))
+    if [ "$attempts" -lt 3 ]; then
+      LOG "Attempt $attempts failed, retrying in 5s..."
+      sleep 5
+    else
+      ERROR "ISO download failed after 3 attempts"
+    fi
+    attempts=$((attempts + 1))
   done
 fi
 
-LOG "Verifying ISO"
-sha256sum -c "${LATEST}.sha256"   || ERROR "SHA256 mismatch"
+LOG "Verifying ISO integrity"
+sha256sum -c "${LATEST}.sha256"   || ERROR "SHA256 check failed"
 gpg --import ncopa.asc           &>/dev/null || ERROR "GPG import failed"
 gpg --verify "${LATEST}.asc" "$LATEST" &>/dev/null \
-                                 || ERROR "GPG signature failed"
+                                 || ERROR "Signature verification failed"
 
 #------------------------------------------------------------------------------
-# 2) Mount ISO & grab apk.static
+# 2) Mount ISO & auto-fetch apk-tools-static
 #------------------------------------------------------------------------------
 LOG "Mounting ISO at $ISO_MNT"
 mkdir -p "$ISO_MNT"
 mount -o loop "/root/$LATEST" "$ISO_MNT" || ERROR "ISO mount failed"
 
-LOG "Copying apk.static from ISO"
-APK_BIN="/root/sbin/apk.static"
-mkdir -p /root/sbin
+LOG "Fetching apk-tools-static index"
+IDX="/tmp/alpine-index.html"
+attempts=1
+while [ "$attempts" -le 3 ]; do
+  rm -f "$IDX"
+  wget --progress=dot:giga -O "$IDX" \
+    "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/" && break
 
-# Try the standard path, else find it
-if [ -f "$ISO_MNT/sbin/apk.static" ]; then
-  cp "$ISO_MNT"/sbin/apk.static "$APK_BIN"
-else
-  FOUND=$(find "$ISO_MNT" -type f -name apk.static | head -1 || true)
-  [ -n "$FOUND" ] && cp "$FOUND" "$APK_BIN" \
-    || ERROR "apk.static not found on ISO"
-fi
-chmod +x "$APK_BIN"
+  if [ "$attempts" -lt 3 ]; then
+    LOG "Index fetch attempt $attempts failed, retrying..."
+    sleep 5
+  else
+    ERROR "Failed to fetch APK index after 3 attempts"
+  fi
+  attempts=$((attempts + 1))
+done
+
+APK_PKG=$(grep -Eo 'apk-tools-static-[0-9.]+(-r[0-9]+)?\.apk' "$IDX" \
+           | sort -V \
+           | tail -1)
+rm -f "$IDX"
+[ -n "$APK_PKG" ] || ERROR "apk-tools-static pkg not found in index"
+
+LOG "Downloading apk-tools-static: $APK_PKG"
+attempts=1
+while [ "$attempts" -le 3 ]; do
+  rm -f "/root/$APK_PKG"
+  wget --progress=dot:giga -O "/root/$APK_PKG" \
+    "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/$APK_PKG" && break
+
+  if [ "$attempts" -lt 3 ]; then
+    LOG "APK download attempt $attempts failed, retrying..."
+    sleep 5
+  else
+    ERROR "Failed to download apk-tools-static after 3 attempts"
+  fi
+  attempts=$((attempts + 1))
+done
+
+LOG "Extracting apk.static"
+mkdir -p /root/sbin
+tar -C /root -xzf "/root/$APK_PKG" sbin/apk.static \
+  || ERROR "Failed to extract apk.static"
+chmod +x /root/sbin/apk.static
+APK_BIN="/root/sbin/apk.static"
+rm -f "/root/$APK_PKG"
 umount "$ISO_MNT"
 
 #------------------------------------------------------------------------------
-# 3) Partition & format disk
+# 3) Partition & format disk (GPT + BIOS-GRUB + /boot + /)
 #------------------------------------------------------------------------------
-LOG "Partitioning $DISK (GPT + BIOS-GRUB + /boot + /)"
-sgdisk --zap-all "$DISK"
-sgdisk --mbrtogpt "$DISK"
-# BIOS-GRUB slice: 1 MiB EF02
-sgdisk -n1:1MiB:+1MiB   -t1:EF02 -c1:"BIOS-GRUB" "$DISK"
-# /boot: 256 MiB ext4
-sgdisk -n2:0:+256MiB    -t2:8300 -c2:"alpine-boot" "$DISK"
-# rest: rootfs ext4
-sgdisk -n3:0:0          -t3:8300 -c3:"alpine-root" "$DISK"
+LOG "Partitioning $DISK (GPT + BIOS-GRUB + 256MiB /boot + rest /)"
+sgdisk --zap-all     "$DISK"
+sgdisk --mbrtogpt    "$DISK"
+sgdisk -n1:1MiB:+1MiB -t1:EF02 -c1:"BIOS-GRUB"  "$DISK"
+sgdisk -n2:0:+256MiB  -t2:8300 -c2:"alpine-boot" "$DISK"
+sgdisk -n3:0:0       -t3:8300 -c3:"alpine-root" "$DISK"
 partprobe "$DISK"
+sleep 2
+
+# verify partitions were created
+for part in "$PART_BIOS" "$PART_BOOT" "$PART_ROOT"; do
+  [ -b "$part" ] || ERROR "Partition $part not found after partprobe"
+done
 
 LOG "Formatting partitions"
-mkfs.ext4 -F "$PART_BOOT" || ERROR "mkfs.ext4 $PART_BOOT failed"
-mkfs.ext4 -F "$PART_ROOT" || ERROR "mkfs.ext4 $PART_ROOT failed"
+mkfs.ext4 -F "$PART_BOOT" || ERROR "mkfs.ext4 on $PART_BOOT failed"
+mkfs.ext4 -F "$PART_ROOT" || ERROR "mkfs.ext4 on $PART_ROOT failed"
 
 #------------------------------------------------------------------------------
 # 4) Mount new filesystems
 #------------------------------------------------------------------------------
-LOG "Mounting root & boot"
+LOG "Mounting root and boot"
 mkdir -p "$CHROOT" "$CHROOT/boot"
 mount "$PART_ROOT" "$CHROOT"     || ERROR "Mount $PART_ROOT failed"
 mount "$PART_BOOT" "$CHROOT/boot" || ERROR "Mount $PART_BOOT failed"
@@ -157,32 +223,32 @@ LOG "Bootstrapping alpine-base"
   add alpine-base || ERROR "alpine-base bootstrap failed"
 
 #------------------------------------------------------------------------------
-# 6) Prepare chroot env
+# 6) Prepare chroot environment
 #------------------------------------------------------------------------------
-LOG "Bind-mounting and DNS"
+LOG "Bind-mounting /dev,/proc,/sys and copying DNS"
 for d in dev proc sys; do
-  mount --bind "/$d" "$CHROOT/$d" || ERROR "Bind $d failed"
+  mount --bind "/$d" "$CHROOT/$d" || ERROR "Bind mount $d failed"
 done
 cp /etc/resolv.conf "$CHROOT/etc/resolv.conf" || ERROR "Copy resolv.conf failed"
 
 #------------------------------------------------------------------------------
-# 7) Chroot: config & GRUB
+# 7) Chroot: configure system & install GRUB
 #------------------------------------------------------------------------------
-LOG "Chroot: configure Alpine + install GRUB"
+LOG "Configuring Alpine in chroot and installing GRUB"
 chroot "$CHROOT" /bin/sh -eux <<EOF
-# Repos
+# 7.1) Repositories
 cat > /etc/apk/repositories <<REPOS
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/community
 REPOS
 
-# fstab
+# 7.2) fstab
 cat > /etc/fstab <<FSTAB
 $PART_ROOT /      ext4 defaults 0 1
 $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
-# Networking
+# 7.3) Networking (DHCP)
 IF=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
 [ -z "\$IF" ] && { WARN "No network interface found, defaulting to eth0"; IF=eth0; }
 cat > /etc/network/interfaces <<NETCFG
@@ -193,7 +259,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# SSH key
+# 7.4) SSH authorized_keys
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -201,17 +267,20 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# Kernel package
-KPKG="linux-virt"
-[ "\$ISO_TYPE" = "standard" ] && KPKG="linux-lts"
+# 7.5) Select kernel package
+KERNEL_PKG="linux-virt"
+[ "\$ISO_TYPE" = "standard" ] && KERNEL_PKG="linux-lts"
 
-# Install kernel + GRUB
+# 7.6) Install kernel + GRUB
 apk update
-apk add "\$KPKG" grub grub-bios
+apk add "\$KERNEL_PKG" grub grub-bios
 
-# Install GRUB & generate cfg
+# 7.7) Install GRUB & generate config
 grub-install "$DISK"
 grub-mkconfig -o /boot/grub/grub.cfg
+
+# sanity check
+[ -f /boot/grub/grub.cfg ] || { echo "GRUB config missing" >&2; exit 1; }
 EOF
 
 #------------------------------------------------------------------------------
@@ -224,13 +293,19 @@ done
 umount "$CHROOT/boot" 2>/dev/null || true
 umount "$CHROOT"      2>/dev/null || true
 
+# force-unmount any leftovers
 if mount | grep -q "$CHROOT"; then
   WARN "Forcing leftover unmounts"
   umount -f "$CHROOT/sys" "$CHROOT/proc" "$CHROOT/dev" \
         "$CHROOT/boot" "$CHROOT" 2>/dev/null || true
 fi
 
-LOG "Install complete. Ensure your VPS boots from $DISK (not PXE)."
-LOG "Syncing & rebooting in 5s…"
+echo
+LOG "Alpine Linux installation completed successfully!"
+LOG "CRITICAL: After reboot, configure your provider to boot from $DISK."
+LOG "If you return to PXE/rescue, double-check boot order or force $DISK."
+LOG "Debug info and grub.cfg live in /boot/grub/grub.cfg on the new system."
+
+LOG "Syncing & rebooting in 5 seconds..."
 sync; sleep 5
 reboot
