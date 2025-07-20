@@ -204,7 +204,7 @@ cp /etc/resolv.conf "$CHROOT/etc/resolv.conf"
 #------------------------------------------------------------------------------
 # 7) In-chroot config & GRUB
 #------------------------------------------------------------------------------
-# Pre-calc kernel package on host so no $ISO_TYPE in chroot
+# Pre-calc kernel package on host so no $ISO_TYPE inside chroot
 KERNEL_PKG="linux-virt"
 [ "$ISO_TYPE" = "standard" ] && KERNEL_PKG="linux-lts"
 
@@ -231,7 +231,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# SSH keys
+# SSH authorized_keys
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -239,12 +239,17 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
+# Pin root by UUID so initramfs never drops to emergency shell
+ROOT_UUID=\$(blkid -s UUID -o value "$PART_ROOT")
+echo "GRUB_CMDLINE_LINUX_DEFAULT=\"root=UUID=\$ROOT_UUID quiet\"" >> /etc/default/grub
+
 # Install kernel + GRUB
 apk update
 apk add "$KERNEL_PKG" grub grub-bios
 
-# Install GRUB
-grub-install "$DISK" > /tmp/grub-install.log 2>&1 || { cat /tmp/grub-install.log >&2; exit 1; }
+# Install GRUB and rebuild config
+grub-install "$DISK" > /tmp/grub-install.log 2>&1 \
+  || { cat /tmp/grub-install.log >&2; exit 1; }
 grub-mkconfig -o /boot/grub/grub.cfg || { echo "grub-mkconfig failed" >&2; exit 1; }
 
 # Sanity check
