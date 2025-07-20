@@ -19,7 +19,7 @@ I made this to wrestle with my IONOS VPS not having a proper custom iso or KVM c
    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
 
 4. Copy your public key to the VPS
-   If you can't scp it since it's gparted just painstakingly copy it
+   If you can't scp it since it's gparted just painstakingly copy it, doing a temporary private github gist to wget might be a clever way if you can't access clipboard
    (paste the contents of ~/.ssh/id_ed25519.pub into /root/id_ed25519.pub)
 
 5. Fetch and make the bootstrap script executable
