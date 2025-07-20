@@ -21,6 +21,8 @@ VPS providers may lock you into their own images. This script allows you to reim
 4. Copy your public key to the VPS
    Paste ~/.ssh/id_ed25519.pub into /root/id_ed25519.pub on the GParted shell.
    Tip: use a private Gist and wget if clipboard isn’t working.
+   ```bash
+   wget -O /root/id_ed25519.pub https://gist.githubusercontent.com/<USERNAME>/<GISTHASHID>/raw
 
 6. Download and make the bootstrap script executable
    ```bash
