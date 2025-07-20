@@ -5,8 +5,8 @@
 #
 # Usage:   ./alpine-install.sh [-t virt|standard] <disk> <ssh-pubkey>
 # Example: ./alpine-install.sh -t virt /dev/vda ~/.ssh/id_rsa.pub
-# Requires tools: wget, sgdisk, mkfs.ext4, mount, tar, dd,
-#                 partprobe, lsblk, blockdev, gpg.
+# Requires: wget, sgdisk, mkfs.ext4, mount, tar, dd,
+#           partprobe, lsblk, blockdev, gpg.
 #----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -19,9 +19,9 @@ WARN()  { echo "[$(date +%H:%M:%S)] WARN: $*" >&2; }
 ERROR() { echo "[$(date +%H:%M:%S)] ERROR: $*" >&2; exit 1; }
 
 #------------------------------------------------------------------------------
-# Defaults & argument parsing
+# Defaults & arg parsing
 #------------------------------------------------------------------------------
-ISO_TYPE="virt"       # "virt" or "standard"
+ISO_TYPE="virt"
 CHROOT="/mnt/alpine"
 ISO_MNT="/mnt/iso"
 
@@ -40,7 +40,7 @@ DISK=$1
 PUBKEY_FILE=$2
 
 #------------------------------------------------------------------------------
-# Pre-flight checks (host-side tools)
+# Pre-flight tools
 #------------------------------------------------------------------------------
 for cmd in wget sgdisk mkfs.ext4 mount tar dd partprobe lsblk blockdev gpg; do
   command -v "$cmd" >/dev/null 2>&1 \
@@ -53,22 +53,20 @@ PUBKEY=$(<"$PUBKEY_FILE")
 [ -n "$PUBKEY" ]      || ERROR "SSH pubkey file is empty"
 
 #------------------------------------------------------------------------------
-# Determine partition suffix (e.g., 'p' for NVMe)
+# Partition names (NVMe uses 'p')
 #------------------------------------------------------------------------------
 PART_PREFIX=""
-case "$DISK" in
-  /dev/nvme*) PART_PREFIX="p" ;;
-esac
+case "$DISK" in /dev/nvme*) PART_PREFIX="p";; esac
 PART_BIOS="${DISK}${PART_PREFIX}1"
 PART_BOOT="${DISK}${PART_PREFIX}2"
 PART_ROOT="${DISK}${PART_PREFIX}3"
 
 #------------------------------------------------------------------------------
-# 0) Clean up old mounts and check for LVM/RAID
+# 0) Cleanup old mounts & check for LVM/RAID
 #------------------------------------------------------------------------------
-LOG "Cleaning up old mounts"
-umount -l "$ISO_MNT"      2>/dev/null || true
-umount -l "$CHROOT"/*     2>/dev/null || true
+LOG "Cleaning up any old mounts"
+umount -l "$ISO_MNT"       2>/dev/null || true
+umount -l "$CHROOT"/*      2>/dev/null || true
 
 MOUNTS=$(lsblk -n -o MOUNTPOINT \
   "$DISK" "$PART_BIOS" "$PART_BOOT" "$PART_ROOT" \
@@ -76,7 +74,7 @@ MOUNTS=$(lsblk -n -o MOUNTPOINT \
 [ -z "$MOUNTS" ] || ERROR "Some partitions on $DISK are mounted; unmount first."
 
 if blkid -s TYPE -o value "$DISK" | grep -Eq '^(LVM|LVM2_member|linux_raid)'; then
-  WARN "Disk $DISK carries LVM/RAID metadata—this will overwrite it!"
+  WARN "Disk $DISK carries LVM/RAID metadata—this install will overwrite it!"
 fi
 
 echo
@@ -103,7 +101,7 @@ cd /root
 if [ -f "$LATEST" ]; then
   LOG "Reusing existing ISO: /root/$LATEST"
 else
-  LOG "Downloading ISO, checksums & GPG key (up to 3 attempts)"
+  LOG "Downloading ISO, checksums & GPG key (3 attempts)"
   attempts=1
   while [ "$attempts" -le 3 ]; do
     wget --progress=dot:giga \
@@ -129,7 +127,7 @@ gpg --verify "${LATEST}.asc" "$LATEST" &>/dev/null \
                                  || ERROR "Signature verification failed"
 
 #------------------------------------------------------------------------------
-# 2) Mount ISO & auto-fetch apk-tools-static
+# 2) Mount ISO & fetch apk-tools-static
 #------------------------------------------------------------------------------
 LOG "Mounting ISO at $ISO_MNT"
 mkdir -p "$ISO_MNT"
@@ -156,7 +154,7 @@ APK_PKG=$(grep -Eo 'apk-tools-static-[0-9.]+(-r[0-9]+)?\.apk' "$IDX" \
            | sort -V \
            | tail -1)
 rm -f "$IDX"
-[ -n "$APK_PKG" ] || { APK_PKG="apk-tools-static-2.14.4.apk"; WARN "No apk-tools-static found in index, falling back to $APK_PKG"; }
+[ -n "$APK_PKG" ] || { APK_PKG="apk-tools-static-2.14.4.apk"; WARN "No apk-tools-static found, falling back to $APK_PKG"; }
 
 LOG "Downloading apk-tools-static: $APK_PKG"
 attempts=1
@@ -186,7 +184,7 @@ umount "$ISO_MNT"
 #------------------------------------------------------------------------------
 # 3) Partition & format disk (GPT + BIOS-GRUB + /boot + /)
 #------------------------------------------------------------------------------
-LOG "Partitioning $DISK (GPT + BIOS-GRUB + 256MiB /boot + rest /)"
+LOG "Partitioning $DISK"
 sgdisk --zap-all     "$DISK"
 sgdisk --mbrtogpt    "$DISK"
 sgdisk -n1:1MiB:+1MiB -t1:EF02 -c1:"BIOS-GRUB"  "$DISK"
@@ -195,9 +193,9 @@ sgdisk -n3:0:0       -t3:8300 -c3:"alpine-root" "$DISK"
 partprobe "$DISK"
 sleep 2
 
-# verify partitions were created
+LOG "Verifying partitions"
 for part in "$PART_BIOS" "$PART_BOOT" "$PART_ROOT"; do
-  [ -b "$part" ] || ERROR "Partition $part not found after partprobe"
+  [ -b "$part" ] || ERROR "Partition $part not found"
 done
 
 LOG "Formatting partitions"
@@ -208,11 +206,16 @@ mkfs.ext4 -F "$PART_ROOT" || ERROR "mkfs.ext4 on $PART_ROOT failed"
 # 4) Mount new filesystems
 #------------------------------------------------------------------------------
 LOG "Mounting root and boot"
-mkdir -p "$CHROOT"
-mkdir -p "$CHROOT/boot"
+mkdir -p "$CHROOT" "$CHROOT/boot"
+[ -d "$CHROOT" ]       || ERROR "Failed to create $CHROOT"
+[ -d "$CHROOT/boot" ]  || ERROR "Failed to create $CHROOT/boot"
+
+LOG "Verifying partitions before mount: $PART_ROOT, $PART_BOOT"
+[ -b "$PART_ROOT" ]    || ERROR "Partition $PART_ROOT not found"
+[ -b "$PART_BOOT" ]    || ERROR "Partition $PART_BOOT not found"
 
 mount "$PART_ROOT" "$CHROOT"       || ERROR "Mount $PART_ROOT failed"
-mount "$PART_BOOT" "$CHROOT/boot" || ERROR "Mount $PART_BOOT failed"
+mount "$PART_BOOT" "$CHROOT/boot"  || ERROR "Mount $PART_BOOT failed"
 
 #------------------------------------------------------------------------------
 # 5) Bootstrap Alpine base
@@ -226,7 +229,7 @@ LOG "Bootstrapping Alpine base"
 #------------------------------------------------------------------------------
 # 6) Prepare chroot environment
 #------------------------------------------------------------------------------
-LOG "Bind-mounting /dev, /proc, /sys and copying DNS"
+LOG "Binding dev/proc/sys and copying DNS"
 for d in dev proc sys; do
   mount --bind "/$d" "$CHROOT/$d" || ERROR "Bind mount $d failed"
 done
@@ -238,10 +241,7 @@ cp /etc/resolv.conf "$CHROOT/etc/resolv.conf" || ERROR "Copy resolv.conf failed"
 LOG "Configuring Alpine in chroot and installing GRUB"
 chroot "$CHROOT" /bin/sh -eux <<EOF
 # Repositories
-cat > /etc/apk/repositories <<REPOS
-https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
-https://dl-cdn.alpinelinux.org/alpine/latest-stable/community
-REPOS
+echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" > /etc/apk/repositories
 
 # fstab
 cat > /etc/fstab <<FSTAB
@@ -249,7 +249,7 @@ $PART_ROOT /      ext4 defaults 0 1
 $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
-# Networking (DHCP)
+# Networking
 IF=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
 [ -z "\$IF" ] && { echo "WARN: No network interface found, defaulting to eth0" >&2; IF=eth0; }
 cat > /etc/network/interfaces <<NETCFG
@@ -260,7 +260,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# SSH authorized_keys
+# SSH keys
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -268,22 +268,15 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# Select kernel package
+# Kernel + GRUB
 KERNEL_PKG="linux-virt"
 [ "\$ISO_TYPE" = "standard" ] && KERNEL_PKG="linux-lts"
-
-# Install kernel + GRUB
 apk update
 apk add "\$KERNEL_PKG" grub grub-bios
 
 # Install GRUB & generate config
 grub-install "$DISK" > /tmp/grub-install.log 2>&1 \
   || { echo "GRUB installation failed" >&2; cat /tmp/grub-install.log >&2; exit 1; }
-cat > /etc/default/grub <<GRUBCFG
-GRUB_TIMEOUT=1
-GRUB_TIMEOUT_STYLE=menu
-GRUB_CMDLINE_LINUX_DEFAULT="quiet"
-GRUBCFG
 grub-mkconfig -o /boot/grub/grub.cfg
 
 # Sanity check
@@ -310,7 +303,7 @@ echo
 LOG "Alpine Linux installation completed successfully!"
 LOG "CRITICAL: After reboot, configure your provider to boot from $DISK."
 LOG "If you return to PXE/rescue, double-check boot order or force $DISK."
-LOG "Debug info and grub.cfg live in /boot/grub/grub.cfg on the new system."
+LOG "Debug info & grub.cfg live in /boot/grub/grub.cfg on the new system."
 LOG "After reboot, verify networking. If interface ($IF) fails, run 'ip link' and edit /etc/network/interfaces."
 
 LOG "Syncing & rebooting in 5 seconds..."
