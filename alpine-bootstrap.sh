@@ -220,7 +220,10 @@ $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
 # Networking
-IF=\$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -v lo | head -1)
+IF=\$(ip -o link show 2>/dev/null \
+      | awk -F': ' '{print \$2}' \
+      | grep -v lo \
+      | head -1)
 IF=\${IF:-eth0}
 echo "INFO: Using interface '\$IF'" >&2
 cat > /etc/network/interfaces <<NETCFG
@@ -239,9 +242,14 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# Pin root by UUID so initramfs never drops to emergency shell
-ROOT_UUID=\$(blkid -s UUID -o value "$PART_ROOT")
-echo "GRUB_CMDLINE_LINUX_DEFAULT=\"root=UUID=\$ROOT_UUID quiet\"" >> /etc/default/grub
+# Ensure /etc/default exists for our GRUB tweak
+mkdir -p /etc/default
+
+# Pin root by UUID so initramfs never drops to an emergency shell
+# (BusyBox blkid prints full device info, so we sed out just the UUID)
+ROOT_UUID=\$(blkid "$PART_ROOT" | sed -n 's/.*UUID="\\([^"]*\\)".*/\\1/p')
+echo "GRUB_CMDLINE_LINUX_DEFAULT=\"root=UUID=\$ROOT_UUID quiet\"" \
+  >> /etc/default/grub
 
 # Install kernel + GRUB
 apk update
