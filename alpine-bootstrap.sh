@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #----------------------------------------------------------------------------
-# alpine-install.sh – installs Alpine Linux on GPT+BIOS using GRUB
+# alpine-bootstrap.sh – installs Alpine Linux on a GPT disk with BIOS/GRUB
 #
-# Usage:   ./alpine-install.sh [-t virt|standard] <disk> <ssh-pubkey>
-# Example: ./alpine-install.sh -t virt /dev/vda ~/.ssh/id_ed25519.pub
+# Usage:   ./alpine-bootstrap.sh [-t virt|standard] <disk> <ssh-pubkey>
+# Example: ./alpine-bootstrap.sh -t virt /dev/vda ~/.ssh/id_rsa.pub
 #
 # Requires host tools: wget, sgdisk, mkfs.ext4, mount, tar, dd,
 #                      partprobe, lsblk, blockdev, gpg
@@ -19,7 +19,7 @@ WARN()  { echo "[$(date +%H:%M:%S)] WARN: $*" >&2; }
 ERROR() { echo "[$(date +%H:%M:%S)] ERROR: $*" >&2; exit 1; }
 
 #------------------------------------------------------------------------------
-# Defaults & arg parsing
+# Defaults & argument parsing
 #------------------------------------------------------------------------------
 ISO_TYPE="virt"
 CHROOT="/mnt/alpine"
@@ -30,7 +30,7 @@ while getopts ":t:" opt; do
     t) [[ $OPTARG =~ ^(virt|standard)$ ]] \
          || ERROR "Invalid ISO type '$OPTARG', use 'virt' or 'standard'"
        ISO_TYPE=$OPTARG ;;
-    \?) ERROR "Invalid option -$OPTARG" ;;
+    \?) ERROR "Invalid option: -$OPTARG" ;;
   esac
 done
 shift $((OPTIND - 1))
@@ -44,7 +44,7 @@ PUBKEY_FILE=$2
 #------------------------------------------------------------------------------
 for cmd in wget sgdisk mkfs.ext4 mount tar dd partprobe lsblk blockdev gpg; do
   command -v "$cmd" >/dev/null 2>&1 \
-    || ERROR "Missing host tool: $cmd"
+    || ERROR "Missing required host tool: $cmd"
 done
 
 [ -b "$DISK" ]        || ERROR "Block device '$DISK' not found"
@@ -56,25 +56,27 @@ PUBKEY=$(<"$PUBKEY_FILE")
 # Partition naming (NVMe uses 'p')
 #------------------------------------------------------------------------------
 PART_PREFIX=""
-case "$DISK" in /dev/nvme*) PART_PREFIX="p" ;; esac
+case "$DISK" in
+  /dev/nvme*) PART_PREFIX="p" ;;
+esac
 PART_BIOS="${DISK}${PART_PREFIX}1"
 PART_BOOT="${DISK}${PART_PREFIX}2"
 PART_ROOT="${DISK}${PART_PREFIX}3"
 
 #------------------------------------------------------------------------------
-# 0) Cleanup & RAID/LVM warning
+# 0) Clean up & warn on LVM/RAID
 #------------------------------------------------------------------------------
 LOG "Cleaning up old mounts"
-umount -l "$ISO_MNT" 2>/dev/null || true
+umount -l "$ISO_MNT"  2>/dev/null || true
 umount -l "$CHROOT"/* 2>/dev/null || true
 
 MOUNTS=$(lsblk -n -o MOUNTPOINT \
   "$DISK" "$PART_BIOS" "$PART_BOOT" "$PART_ROOT" \
   | grep -v '^$' || true)
-[ -z "$MOUNTS" ] || ERROR "Partitions still mounted; unmount first."
+[ -z "$MOUNTS" ] || ERROR "Some partitions still mounted; unmount first."
 
 if blkid -s TYPE -o value "$DISK" | grep -Eq '^(LVM|LVM2_member|linux_raid)'; then
-  WARN "Disk $DISK carries LVM/RAID metadata—this install will overwrite it!"
+  WARN "Disk $DISK has LVM/RAID metadata—this will overwrite it!"
 fi
 
 echo
@@ -94,7 +96,7 @@ LATEST=$(wget -qO- "$BASE" \
   | grep -v rc \
   | sort -V \
   | tail -1)
-[ -n "$LATEST" ] || ERROR "Could not find Alpine $ISO_TYPE ISO"
+[ -n "$LATEST" ] || ERROR "Unable to find Alpine $ISO_TYPE ISO"
 ISO_URL="${BASE}${LATEST}"
 
 cd /root
@@ -109,7 +111,7 @@ else
       "$ISO_URL.sha256" \
       "$ISO_URL.asc" \
       "https://alpinelinux.org/keys/ncopa.asc" && break
-    LOG "ISO download attempt $attempts failed, retrying in 5s..."
+    LOG "ISO download attempt $attempts failed, retrying..."
     sleep 5
     attempts=$((attempts + 1))
   done
@@ -144,7 +146,7 @@ APK_PKG=$(grep -Eo 'apk-tools-static-[0-9.]+(-r[0-9]+)?\.apk' "$IDX" \
            | sort -V | tail -1)
 rm -f "$IDX"
 [ -n "$APK_PKG" ] \
-  || { APK_PKG="apk-tools-static-2.14.4.apk"; WARN "No apk-tools-static found, falling back to $APK_PKG"; }
+  || { APK_PKG="apk-tools-static-2.14.4.apk"; WARN "Falling back to $APK_PKG"; }
 
 LOG "Downloading apk-tools-static: $APK_PKG"
 attempts=1
@@ -167,49 +169,36 @@ rm -f "/root/$APK_PKG"
 umount "$ISO_MNT"
 
 #------------------------------------------------------------------------------
-# 3) Partition & format
+# 3) Partition & format disk
 #------------------------------------------------------------------------------
 LOG "Partitioning $DISK"
 sgdisk --zap-all     "$DISK"
 sgdisk --mbrtogpt    "$DISK"
 sgdisk -n1:1MiB:+1MiB -t1:EF02 -c1:"BIOS-GRUB"  "$DISK"
 sgdisk -n2:0:+256MiB  -t2:8300 -c2:"alpine-boot" "$DISK"
-sgdisk -n3:0:0       -t3:8300 -c3:"alpine-root" "$DISK"
+sgdisk -n3:0:0        -t3:8300 -c3:"alpine-root" "$DISK"
 partprobe "$DISK"
 sleep 2
 
-LOG "Verifying partitions"
+LOG "Verifying partitions exist"
 for p in "$PART_BIOS" "$PART_BOOT" "$PART_ROOT"; do
   [ -b "$p" ] || ERROR "Partition $p missing"
 done
 
 LOG "Formatting /boot and /"
-mkfs.ext4 -F "$PART_BOOT" || ERROR "mkfs.ext4 $PART_BOOT failed"
-mkfs.ext4 -F "$PART_ROOT" || ERROR "mkfs.ext4 $PART_ROOT failed"
+mkfs.ext4 -F "$PART_BOOT" || ERROR "mkfs.ext4 on $PART_BOOT failed"
+mkfs.ext4 -F "$PART_ROOT" || ERROR "mkfs.ext4 on $PART_ROOT failed"
 
 #------------------------------------------------------------------------------
 # 4) Mount new filesystems
 #------------------------------------------------------------------------------
 LOG "Mounting root filesystem"
-# 1) ensure chroot dir
 mkdir -p "$CHROOT"
-[ -d "$CHROOT" ] || ERROR "Failed to create $CHROOT"
+mount "$PART_ROOT" "$CHROOT" || ERROR "Mount $PART_ROOT failed"
 
-# 2) mount root
-mount "$PART_ROOT" "$CHROOT" || ERROR "Mount $PART_ROOT failed: $(mount)"
-
-# 3) create boot dir inside the freshly-mounted root
 LOG "Creating /boot inside new root"
 mkdir -p "$CHROOT/boot"
-[ -d "$CHROOT/boot" ] || ERROR "Failed to create $CHROOT/boot"
-
-# 4) now mount the boot partition
-LOG "Mounting boot partition"
-mount "$PART_BOOT" "$CHROOT/boot" || ERROR "Mount $PART_BOOT failed: $(mount)"
-
-## debug: show mountpoint directories (and save to a log for post-mortem)
-ls -ld "$(dirname "$CHROOT")" "$CHROOT" "$CHROOT/boot" \
-  | tee /tmp/mount-debug.log
+mount "$PART_BOOT" "$CHROOT/boot" || ERROR "Mount $PART_BOOT failed"
 
 #------------------------------------------------------------------------------
 # 5) Bootstrap Alpine base
@@ -223,62 +212,64 @@ LOG "Bootstrapping Alpine base"
 #------------------------------------------------------------------------------
 # 6) Prepare chroot environment
 #------------------------------------------------------------------------------
-LOG "Binding dev/proc/sys and copying DNS"
+LOG "Binding /dev, /proc, /sys and copying DNS"
 for d in dev proc sys; do
   mount --bind "/$d" "$CHROOT/$d" || ERROR "Bind mount $d failed"
 done
 cp /etc/resolv.conf "$CHROOT/etc/resolv.conf" || ERROR "Copy resolv.conf failed"
 
 #------------------------------------------------------------------------------
-# 7) In-chroot configure & install GRUB
+# 7) Configure in-chroot & install GRUB
 #------------------------------------------------------------------------------
-LOG "Configuring in chroot + installing GRUB"
+LOG "Configuring Alpine in chroot and installing GRUB"
 chroot "$CHROOT" /bin/sh -eux <<EOF
 # repos
 echo -e "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main\n" > /etc/apk/repositories
 
 # fstab
-cat > /etc/fstab <<F
-$PART_ROOT / ext4 defaults 0 1
-$PART_BOOT /boot ext4 defaults 0 2
-F
+cat > /etc/fstab <<FSTAB
+$PART_ROOT /      ext4 defaults 0 1
+$PART_BOOT /boot  ext4 defaults 0 2
+FSTAB
 
-  # Networking: pick first non-loopback interface or default to eth0
-  IF=$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -v lo | head -1 || true)
-  if [ -z "$IF" ]; then
-    echo "WARN: No network interface found, defaulting to eth0" >&2
-    IF=eth0
-  fi
-  cat > /etc/network/interfaces <<N
+# Networking: pick interface or default to eth0
+IF=\$(ip -o link show 2>/dev/null \
+      | awk -F': ' '{print \$2}' \
+      | grep -v lo \
+      | head -1)
+IF=\${IF:-eth0}
+echo "INFO: Using network interface '\$IF'" >&2
+cat > /etc/network/interfaces <<NETCFG
 auto lo
 iface lo inet loopback
 
 auto \$IF
 iface \$IF inet dhcp
-N
+NETCFG
 
-# ssh keys
+# SSH authorized_keys
 mkdir -p /root/.ssh
-cat > /root/.ssh/authorized_keys <<K
+cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
-K
+KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# kernel + grub
+# Select kernel package
 KERNEL_PKG="linux-virt"
-[ "$ISO_TYPE" = "standard" ] && KERNEL_PKG="linux-lts"
-apk update
-apk add "$KERNEL_PKG" grub grub-bios
+[ "\$ISO_TYPE" = "standard" ] && KERNEL_PKG="linux-lts"
 
-# install grub
-grub-install "$DISK" > /tmp/grub.log 2>&1 \
-  || { cat /tmp/grub.log >&2; exit 1; }
-grub-mkconfig -o /boot/grub/grub.cfg \
-  || { echo "grub-mkconfig failed" >&2; exit 1; }
+# Install kernel + GRUB
+apk update
+apk add "\$KERNEL_PKG" grub grub-bios
+
+# Install GRUB and generate config
+grub-install "$DISK" > /tmp/grub-install.log 2>&1 \
+  || { cat /tmp/grub-install.log >&2; exit 1; }
+grub-mkconfig -o /boot/grub/grub.cfg || { echo "grub-mkconfig failed" >&2; exit 1; }
 
 # sanity check
-[ -s /boot/grub/grub.cfg ] || { echo "GRUB config is empty or missing" >&2; exit 1; }
+[ -s /boot/grub/grub.cfg ] || { echo "GRUB config is missing" >&2; exit 1; }
 EOF
 
 #------------------------------------------------------------------------------
@@ -292,14 +283,14 @@ umount "$CHROOT/boot" 2>/dev/null || true
 umount "$CHROOT"      2>/dev/null || true
 
 if mount | grep -q "$CHROOT"; then
-  WARN "Failed to unmount some filesystems. System may be inconsistent."
-  umount -f "$CHROOT"/{sys,proc,dev,boot,''} 2>/dev/null || true
+  WARN "Leftover mounts—system may be inconsistent."
+  umount -f "$CHROOT"/{sys,proc,dev,boot} 2>/dev/null || true
 fi
 
 echo
 LOG "Installation complete!"
-LOG "CRITICAL: Set $DISK as boot device in your panel."
-LOG "If you land in PXE/rescue, re-order boot or force $DISK."
+LOG "CRITICAL: Set $DISK as your boot device in the provider panel."
+LOG "If you return to PXE/rescue, re-order boot or force $DISK."
 LOG "Check /boot/grub/grub.cfg and network inside Alpine if you hit issues."
 LOG "Syncing & rebooting in 5s..."
 sync; sleep 5
