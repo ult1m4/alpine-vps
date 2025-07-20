@@ -65,3 +65,15 @@ VPS providers may lock you into their own images. This script allows you to reim
 
 8. Clear Logging & Finalization  
    Verbose timestamps, error context (including mount/GRUB logs), and safe reboot steps give you instant insight and a one-shot installation.
+
+# things to add
+
+Potential support for other distros with auto-fetch isos
+
+UEFI support via grub-efi
+
+Optional disk encryption
+
+Cloud-init or SSH provisioning hooks
+
+A --dry-run or --no-reboot flag for testing
