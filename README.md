@@ -7,7 +7,7 @@ I made this to wrestle with my IONOS VPS not having a proper custom iso or KVM c
 # how
 
 1. Boot your IONOS VPS into the GParted Live ISO  
-   - In the menu, choose “Enter command line prompt”
+   - In the menu, choose “Enter command line prompt” - you could also do it in the GUI, your choice
 
 2. Bring up networking  
    ```bash
