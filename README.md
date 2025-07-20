@@ -41,9 +41,10 @@ VPS providers may lock you into their own images. This script allows you to reim
 9. Allow install to complete and reboot.
    If your VPS is similar to mine, it will still boot into GParted. Go ahead and do that. At this point, if you'd like to install GRUB to make Alpine our primary boot, re-enter a terminal in gparted (empty is fine):
    ```bash
+   mkdir -p /mnt/alpine
    mount /dev/vda2 /mnt/alpine
    mount /dev/vda1 /mnt/alpine/boot
-   chroot /mnt/alpine
+   chroot /mnt/alpine /bin/sh
    apk add grub
    grub-install /dev/vda
    grub-mkconfig -o /boot/grub/grub.cfg
