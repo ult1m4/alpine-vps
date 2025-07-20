@@ -40,20 +40,28 @@ VPS providers may lock you into their own images. This script allows you to reim
 
 8. Allow install to complete and reboot. You should have a functioning Alpine system, with your ssh key present.
     
-# Feature Set
+# features
 
-   ISO Flavor Selection Choose between “virt” or “standard” builds via -t, automatically fetching the latest Alpine ISO.
+1. ISO Flavor Selection  
+   Choose between “virt” or “standard” builds via `-t`, automatically fetching the latest Alpine ISO.
 
-   Smart Disk Setup Auto-detects NVMe vs classic disks, wipes existing RAID/LVM metadata, and partitions for BIOS+GRUB: BIOS-GRUB, 256 MiB /boot, rest /.
+2. Smart Disk Setup  
+   Auto-detects NVMe vs classic disks, wipes existing RAID/LVM metadata, and partitions for BIOS+GRUB: BIOS-GRUB, 256 MiB `/boot`, rest `/`.
 
-   Robust Download & Verification Live‐progress ISO pulls with retries, SHA256 checksum and GPG signature checks ensure a tamper-proof base.
+3. Robust Download & Verification  
+   Live‐progress ISO pulls with retries, SHA256 checksum and GPG signature checks ensure a tamper-proof base.
 
-   Minimal Apk-tools-static Bootstrap Fetches just the apk-tools-static package from Alpine’s main repo—no huge ISOs—then bootstraps alpine-base cleanly in chroot.
+4. Minimal Apk-tools-static Bootstrap  
+   Fetches just the `apk-tools-static` package from Alpine’s main repo—no huge ISOs—then bootstraps `alpine-base` cleanly in chroot.
 
-   Automated Chroot Configuration Sets up /etc/fstab, networking (DHCP), SSH authorized_keys, and installs linux-virt (or LTS), grub, and essential packages.
+5. Automated Chroot Configuration  
+   Sets up `/etc/fstab`, networking (DHCP), SSH authorized_keys, and installs `linux-virt` (or LTS), `grub`, and essential packages.
 
-   Real GRUB Bootloader Installs and configures GRUB (not Syslinux) for a solid, BIOS-bootable system—no MBR hacks or “hope-it-boots” tricks.
+6. Real GRUB Bootloader  
+   Installs and configures GRUB (not Syslinux) for a solid, BIOS-bootable system—no MBR hacks or “hope-it-boots” tricks.
 
-   Defensive, POSIX-Compatible Scripting Strict set -euo pipefail, comprehensive mount checks, retry loops, and cleanup ensure reproducible runs even in rescue shells.
+7. Defensive, POSIX-Compatible Scripting  
+   Strict `set -euo pipefail`, comprehensive mount checks, retry loops, and cleanup ensure reproducible runs even in rescue shells.
 
-   Clear Logging & Finalization Verbose timestamps, error context (including mount/GRUB logs), and safe reboot steps give you instant insight and a one-shot installation.
+8. Clear Logging & Finalization  
+   Verbose timestamps, error context (including mount/GRUB logs), and safe reboot steps give you instant insight and a one-shot installation.
