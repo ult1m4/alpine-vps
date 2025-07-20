@@ -51,16 +51,20 @@ echo "Type 'yes' to proceed, anything else to abort."
 read -r confirm
 [ "$confirm" != "yes" ] && ERROR "Aborted by user."
 
-# Fetch latest Alpine virt ISO
-LOG "Fetching latest Alpine virt ISO name..."
+# Fetch latest Alpine standard ISO
+LOG "Fetching latest Alpine standard ISO name..."
 LISTING="https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/"
-LATEST=$(wget -qO- "$LISTING" 2>/tmp/wget_err | grep -o 'alpine-virt-[0-9.]\+-x86_64.iso' | grep -v '_rc' | sort -V | tail -n1)
+LATEST=$(wget -qO- "$LISTING" 2>/tmp/wget_err \
+  | grep -o 'alpine-standard-[0-9.]\+-x86_64.iso' \
+  | grep -v '_rc' \
+  | sort -V \
+  | tail -n1)
 if [ -z "$LATEST" ]; then
-  WARN "Failed to find latest virt ISO in directory listing."
+  WARN "Failed to find latest standard ISO in directory listing."
   cat /tmp/wget_err >&2
   ERROR "Could not fetch latest Alpine ISO. Check network or CDN."
 fi
-VERSION=$(echo "$LATEST" | sed 's/alpine-virt-\([0-9.]\+\)-x86_64.iso/\1/')
+VERSION=$(echo "$LATEST" | sed 's/alpine-standard-\([0-9.]\+\)-x86_64.iso/\1/')
 ISO_URL="$LISTING$LATEST"
 SHA256_URL="$LISTING${LATEST}.sha256"
 ASC_URL="$LISTING${LATEST}.asc"
@@ -87,7 +91,7 @@ umount "$ISO_MNT"
 # Bootstrap Alpine into chroot
 LOG "Bootstrapping Alpine into $CHROOT..."
 mkdir -p "$CHROOT"
-"$ISO_MNT/apks/x86_64/sbin/apk.static" \
+/root/$ISO_MNT/apks/x86_64/sbin/apk.static \
   --repository "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" \
   --allow-untrusted -U --root "$CHROOT" --initdb add alpine-base linux-virt syslinux e2fsprogs openssh || ERROR "Failed to bootstrap Alpine"
 
@@ -164,7 +168,7 @@ C
 apk update
 apk add linux-virt
 cp /usr/lib/syslinux/mbr/mbr.bin /boot/
-C
+EOF
 
 # Cleanup and reboot
 LOG "Cleaning up mounts..."
