@@ -24,7 +24,8 @@ VPS providers may lock you into their own images. This script allows you to reim
 
 6. Download and make the bootstrap script executable
    ```bash
-   wget -O alpine-bootstrap.sh https://raw.githubusercontent.com/ult1m4/alpine-vps/main/alpine-bootstrap.sh
+   wget -O alpine-bootstrap.sh \
+   https://raw.githubusercontent.com/ult1m4/alpine-vps/main/alpine-bootstrap.sh
    chmod +x alpine-bootstrap.sh
 
 7. Run the installer (use lsblk or gparted to find /dev/vda or device name)
