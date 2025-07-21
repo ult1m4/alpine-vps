@@ -232,7 +232,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# 4) SSH keys
+# 4) SSH authorized_keys
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -243,7 +243,7 @@ chmod 600 /root/.ssh/authorized_keys
 # 5) Ensure /etc/default exists
 mkdir -p /etc/default
 
-# 6) Write full GRUB defaults including initrd and rootdelay
+# 6) Write complete GRUB defaults (with initrd & rootdelay)
 cat > /etc/default/grub <<GRUBCFG
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=1
@@ -257,27 +257,31 @@ GRUB_PRELOAD_MODULES="part_gpt part_msdos"
 GRUB_EARLY_INITRD_LINUX="/boot/initramfs-virt"
 GRUBCFG
 
-# 7) Install kernel and initramfs with ext4 support
+# 7) Install kernel and generate initramfs with ext4 & sysroot support
 apk update
 apk add "$KERNEL_PKG"
 KVER=\$(ls /lib/modules)
-mkinitfs -o /boot/initramfs-virt -k "\$KVER" -f "base ext4"
+echo "INFO: Generating initramfs for kernel \$KVER" >&2
+mkinitfs -o /boot/initramfs-virt -k "\$KVER" -f "base modules ext4" \
+  || { echo "ERROR: mkinitfs failed" >&2; exit 1; }
 
-# 8) Install GRUB
+# 8) Install GRUB packages
 apk add grub grub-bios
+echo "INFO: Installing GRUB to $DISK" >&2
 
 # 9) Install & generate GRUB config
 grub-install "$DISK" > /tmp/grub-install.log 2>&1 || { cat /tmp/grub-install.log >&2; exit 1; }
-grub-mkconfig -o /boot/grub/grub.cfg   || { echo "grub-mkconfig failed" >&2; exit 1; }
+grub-mkconfig -o /boot/grub/grub.cfg   || { echo "ERROR: grub-mkconfig failed" >&2; exit 1; }
 
-# 10) Sanity checks inside the chroot
-test -s /boot/grub/grub.cfg                     || { echo "GRUB config missing!" >&2; exit 1; }
+# 10) Sanity checks (inside chroot)
+test -s /boot/grub/grub.cfg                     || { echo "ERROR: GRUB config missing!" >&2; exit 1; }
 grep -q "root=PARTUUID=$PARTUUID" /boot/grub/grub.cfg \
-                                                || { echo "PARTUUID not in grub.cfg" >&2; exit 1; }
+                                                || { echo "ERROR: PARTUUID not in grub.cfg" >&2; exit 1; }
 grep -q -E "[[:space:]]*initrd.*initramfs-virt" /boot/grub/grub.cfg \
-                                                || { echo "initrd entry missing" >&2; exit 1; }
-EOF
+                                                || { echo "ERROR: initrd entry missing" >&2; exit 1; }
 
+echo "INFO: In-chroot GRUB config and initramfs build complete" >&2
+EOF
 
 #------------------------------------------------------------------------------
 # 8) Cleanup & reboot
