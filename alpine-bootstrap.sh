@@ -211,19 +211,17 @@ PARTUUID=$(blkid -s PARTUUID -o value "$PART_ROOT")
 
 LOG "Configuring in chroot and installing GRUB"
 chroot "$CHROOT" /bin/sh -eux <<EOF
-# 1) Set up repositories
-echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" \
-  > /etc/apk/repositories
+# 1) repositories
+echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" > /etc/apk/repositories
 
-# 2) Configure fstab
+# 2) fstab
 cat > /etc/fstab <<FSTAB
 $PART_ROOT /      ext4 defaults 0 1
 $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
-# 3) Set up networking (DHCP)
-IF=\$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' \
-      | grep -v lo | head -1)
+# 3) networking (DHCP)
+IF=\$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -v lo | head -1)
 IF=\${IF:-eth0}
 echo "INFO: Using interface '\$IF'" >&2
 cat > /etc/network/interfaces <<NETCFG
@@ -234,7 +232,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# 4) Configure SSH authorized_keys
+# 4) SSH keys
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -242,10 +240,10 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# 5) Ensure GRUB defaults directory exists
+# 5) Ensure /etc/default exists
 mkdir -p /etc/default
 
-# 6) Write GRUB configuration with increased rootdelay and initrd
+# 6) Write full GRUB defaults including initrd and rootdelay
 cat > /etc/default/grub <<GRUBCFG
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=1
@@ -259,35 +257,27 @@ GRUB_PRELOAD_MODULES="part_gpt part_msdos"
 GRUB_EARLY_INITRD_LINUX="/boot/initramfs-virt"
 GRUBCFG
 
-# 7) Install kernel
+# 7) Install kernel and initramfs with ext4 support
 apk update
 apk add "$KERNEL_PKG"
-
-# 8) Generate initramfs with ext4 support for the correct kernel version
 KVER=\$(ls /lib/modules)
 mkinitfs -o /boot/initramfs-virt -k "\$KVER" -f "base ext4"
 
-# 9) Install GRUB
+# 8) Install GRUB
 apk add grub grub-bios
 
-# 10) Install and generate GRUB config
-grub-install "$DISK" > /tmp/grub-install.log 2>&1 \
-  || { cat /tmp/grub-install.log >&2; exit 1; }
-grub-mkconfig -o /boot/grub/grub.cfg \
-  || { echo "grub-mkconfig failed" >&2; exit 1; }
+# 9) Install & generate GRUB config
+grub-install "$DISK" > /tmp/grub-install.log 2>&1 || { cat /tmp/grub-install.log >&2; exit 1; }
+grub-mkconfig -o /boot/grub/grub.cfg   || { echo "grub-mkconfig failed" >&2; exit 1; }
 
-# 11) Sanity checks
--[ -s /boot/grub/grub.cfg ] || { echo "GRUB config missing!" >&2; exit 1; }
--grep -q "root=PARTUUID=$PARTUUID" /boot/grub/grub.cfg \
--  || { echo "PARTUUID not found in grub.cfg" >&2; exit 1; }
--grep -q "initrd /boot/initramfs-virt" /boot/grub/grub.cfg \
--  || { echo "initrd not found in grub.cfg" >&2; exit 1; }
-+[ -s /boot/grub/grub.cfg ] || { echo "GRUB config missing!" >&2; exit 1; }
-+grep -q "root=PARTUUID=$PARTUUID" /boot/grub/grub.cfg \
-+  || { echo "PARTUUID not found in grub.cfg" >&2; exit 1; }
-+grep -q -E "[[:space:]]*initrd[[:space:]]+/boot/initramfs-virt" /boot/grub/grub.cfg \
-+  || { echo "initrd entry not found in grub.cfg" >&2; exit 1; }
+# 10) Sanity checks inside the chroot
+test -s /boot/grub/grub.cfg                     || { echo "GRUB config missing!" >&2; exit 1; }
+grep -q "root=PARTUUID=$PARTUUID" /boot/grub/grub.cfg \
+                                                || { echo "PARTUUID not in grub.cfg" >&2; exit 1; }
+grep -q -E "[[:space:]]*initrd.*initramfs-virt" /boot/grub/grub.cfg \
+                                                || { echo "initrd entry missing" >&2; exit 1; }
 EOF
+
 
 #------------------------------------------------------------------------------
 # 8) Cleanup & reboot
