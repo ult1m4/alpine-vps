@@ -183,7 +183,7 @@ KERNEL_PKG="linux-$KERNEL_SUFFIX"
 VMLINUZ_NAME="vmlinuz-$KERNEL_SUFFIX"
 INITRAMFS_NAME="initramfs-$KERNEL_SUFFIX"
 
-# Host-side: grab PARTUUIDs & FS UUID
+# Host-side: grab PARTUUIDs and FS UUIDs
 ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$PART_ROOT")
 BOOT_PARTUUID=$(blkid -s PARTUUID -o value "$PART_BOOT")
 BOOT_FS_UUID=$(blkid -s UUID     -o value "$PART_BOOT")
@@ -194,7 +194,7 @@ BOOT_FS_UUID=$(blkid -s UUID     -o value "$PART_BOOT")
 LOG "Entering chroot to install kernel, initramfs & GRUB"
 
 chroot "$CHROOT" /bin/sh -eux <<EOF
-  # 1) APK repositories
+  # 1) APK repos
   cat > /etc/apk/repositories <<REPOS
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/community
@@ -230,7 +230,7 @@ KEY
   # 5) Install kernel & GRUB
   apk add "$KERNEL_PKG" grub grub-bios
 
-  # 6) Detect actual kernel version (avoid unset errors)
+  # 6) Detect actual kernel version
   echo "INFO: detecting kernel version for $KERNEL_PKG" >&2
   if [ -L "/boot/vmlinuz-$KERNEL_SUFFIX" ]; then
     TARGET=\$(readlink -f "/boot/vmlinuz-$KERNEL_SUFFIX")
@@ -240,7 +240,7 @@ KEY
   fi
   [ -n "\$KERNEL_VERSION" ] || { echo "ERROR: kernel version not found" >&2; exit 1; }
 
-  # 7) Build initramfs (udev, sysroot, ext4 & virtio)
+  # 7) Build initramfs (udev, sysroot, ext4 & virtio drivers)
   mkinitfs \
     -o "/boot/$INITRAMFS_NAME" \
     -k "\$KERNEL_VERSION" \
@@ -272,7 +272,7 @@ menuentry "Alpine Linux" {
 }
 GRUBCFG
 
-  # 10) Sanity checks
+  # 10) Final sanity checks
   test -s "/boot/$VMLINUZ_NAME"    || { echo "ERROR: kernel missing" >&2; exit 1; }
   test -s "/boot/$INITRAMFS_NAME"  || { echo "ERROR: initramfs missing" >&2; exit 1; }
   grep -q "$BOOT_FS_UUID" /boot/grub/grub.cfg \
