@@ -183,30 +183,32 @@ KERNEL_PKG="linux-$KERNEL_SUFFIX"
 INITRAMFS_NAME="initramfs-$KERNEL_SUFFIX"
 VMLINUZ_NAME="vmlinuz-$KERNEL_SUFFIX"
 
-# Get PARTUUIDs for a more robust fstab and grub.cfg
+# Get PARTUUIDs for fstab and GRUB
 ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$PART_ROOT")
 BOOT_PARTUUID=$(blkid -s PARTUUID -o value "$PART_BOOT")
-[ -n "$ROOT_PARTUUID" ] || ERROR "Could not determine PARTUUID for root partition."
-[ -n "$BOOT_PARTUUID" ] || ERROR "Could not determine PARTUUID for boot partition."
+[ -n "$ROOT_PARTUUID" ] || ERROR "Could not determine PARTUUID for root"
+[ -n "$BOOT_PARTUUID" ] || ERROR "Could not determine PARTUUID for boot"
 
-LOG "Entering chroot to configure Alpine (kernel, fstab, bootloader)..."
+LOG "Entering chroot to configure Alpine (kernel, initramfs, bootloader)"
 
 chroot "$CHROOT" /bin/sh -eux <<EOF
-# 1) Set up APK repositories
-echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" > /etc/apk/repositories
-echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/community" >> /etc/apk/repositories
+# 1) Repositories
+echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" \
+  > /etc/apk/repositories
+echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/community" \
+  >> /etc/apk/repositories
 apk update
 
-# 2) Write fstab using robust PARTUUIDs
+# 2) /etc/fstab
 cat > /etc/fstab <<FSTAB
 PARTUUID=$ROOT_PARTUUID /      ext4 defaults,noatime 0 1
 PARTUUID=$BOOT_PARTUUID /boot  ext4 defaults,noatime 0 2
 FSTAB
 
-# 3) Configure networking
+# 3) Networking (DHCP)
 IFACE=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
 IFACE=\${IFACE:-eth0}
-echo "INFO: Configuring network for interface: \$IFACE" >&2
+echo "INFO: Configuring network on \$IFACE" >&2
 cat > /etc/network/interfaces <<NETCFG
 auto lo
 iface lo inet loopback
@@ -215,7 +217,7 @@ auto \$IFACE
 iface \$IFACE inet dhcp
 NETCFG
 
-# 4) Set up SSH access
+# 4) SSH keys
 mkdir -p /root/.ssh
 chmod 700 /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
@@ -223,45 +225,50 @@ $PUBKEY
 KEY
 chmod 600 /root/.ssh/authorized_keys
 
-# 5) Install kernel, GRUB, and other essentials
-echo "INFO: Installing kernel ($KERNEL_PKG), grub, and openssh..." >&2
+# 5) Install kernel, GRUB and OpenSSH
+echo "INFO: apk add $KERNEL_PKG, grub, grub-bios, openssh-server" >&2
 apk add "$KERNEL_PKG" grub grub-bios openssh-server
 
-# 6) Configure OpenSSH to start on boot
+# 6) Enable sshd
 rc-update add sshd default
 
-# 7) Create the initramfs
-echo "INFO: Building initramfs..." >&2
-mkinitfs -o "/boot/$INITRAMFS_NAME"
+# 7) Build a full initramfs (with /sysroot & ext4 support)
+KVER=\$(ls /lib/modules)
+echo "INFO: mkinitfs -o /boot/$INITRAMFS_NAME -k \$KVER -f 'base modules ext4'" >&2
+mkinitfs -o "/boot/$INITRAMFS_NAME" -k "\$KVER" -f "base modules ext4" \
+  || { echo "ERROR: mkinitfs failed" >&2; exit 1; }
 
-# 8) Install GRUB to the disk's boot record
-#    THIS IS THE CRITICAL STEP THAT MAKES THE DISK BOOTABLE
-echo "INFO: Installing GRUB to $DISK..." >&2
-grub-install "$DISK"
+# 8) Install GRUB to the disk’s MBR/GPT
+echo "INFO: grub-install $DISK" >&2
+grub-install "$DISK" \
+  || { echo "ERROR: grub-install failed" >&2; exit 1; }
 
 # 9) Write a static, robust grub.cfg
-echo "INFO: Creating GRUB configuration file..." >&2
+echo "INFO: Writing /boot/grub/grub.cfg" >&2
+mkdir -p /boot/grub
 cat > /boot/grub/grub.cfg <<GRUBCFG
 set default=0
 set timeout=2
-set hidden_timeout_quiet=false
 
 menuentry "Alpine Linux" {
+    insmod part_gpt
     insmod ext2
-    set root=(hd0,gpt2)
-    search --no-floppy --fs-uuid --set=root $(blkid -s UUID -o value $PART_BOOT)
-    linux   /$VMLINUZ_NAME root=PARTUUID=$ROOT_PARTUUID modules=ext4 quiet rootdelay=5
-    initrd  /$INITRAMFS_NAME
+    search --no-floppy --fs-partuuid --set=root $BOOT_PARTUUID
+    linux /$VMLINUZ_NAME root=PARTUUID=$ROOT_PARTUUID ro rootfstype=ext4 rootdelay=30 quiet
+    initrd /$INITRAMFS_NAME
 }
 GRUBCFG
 
 # 10) Final sanity checks
-echo "INFO: Performing final sanity checks inside chroot..." >&2
-[ -s "/boot/$VMLINUZ_NAME" ] || { echo "ERROR: Kernel image is missing!" >&2; exit 1; }
-[ -s "/boot/$INITRAMFS_NAME" ] || { echo "ERROR: Initramfs is missing!" >&2; exit 1; }
-grep -q "root=PARTUUID=$ROOT_PARTUUID" /boot/grub/grub.cfg || { echo "ERROR: Root PARTUUID is wrong in grub.cfg!" >&2; exit 1; }
+echo "INFO: Performing final sanity checks" >&2
+test -s "/boot/$VMLINUZ_NAME"    || { echo "ERROR: Kernel image missing" >&2; exit 1; }
+test -s "/boot/$INITRAMFS_NAME"  || { echo "ERROR: Initramfs missing" >&2; exit 1; }
+grep -q "root=PARTUUID=$ROOT_PARTUUID" /boot/grub/grub.cfg \
+                                || { echo "ERROR: bad root=PARTUUID in grub.cfg" >&2; exit 1; }
+grep -q "initrd /$INITRAMFS_NAME"    /boot/grub/grub.cfg \
+                                || { echo "ERROR: missing initrd stanza" >&2; exit 1; }
 
-echo "INFO: Chroot configuration complete." >&2
+echo "INFO: Chroot configuration complete" >&2
 EOF
 
 #------------------------------------------------------------------------------
