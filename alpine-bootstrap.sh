@@ -183,7 +183,7 @@ KERNEL_PKG="linux-$KERNEL_SUFFIX"
 VMLINUZ_NAME="vmlinuz-$KERNEL_SUFFIX"
 INITRAMFS_NAME="initramfs-$KERNEL_SUFFIX"
 
-# Host-side: grab PARTUUIDs + FS UUID for boot/root
+# Host-side: grab PARTUUIDs & FS UUID
 ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$PART_ROOT")
 BOOT_PARTUUID=$(blkid -s PARTUUID -o value "$PART_BOOT")
 BOOT_FS_UUID=$(blkid -s UUID     -o value "$PART_BOOT")
@@ -194,17 +194,17 @@ BOOT_FS_UUID=$(blkid -s UUID     -o value "$PART_BOOT")
 LOG "Entering chroot to install kernel, initramfs & GRUB"
 
 chroot "$CHROOT" /bin/sh -eux <<EOF
-  # 1) APK repos
+  # 1) APK repositories
   cat > /etc/apk/repositories <<REPOS
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/community
 REPOS
   apk update
 
-  # 2) Write /etc/fstab (PARTUUIDs)
+  # 2) /etc/fstab (root=ext4, boot=vfat)
   cat > /etc/fstab <<FSTAB
 PARTUUID=$ROOT_PARTUUID /      ext4 defaults,noatime 0 1
-PARTUUID=$BOOT_PARTUUID /boot  ext4 defaults,noatime 0 2
+PARTUUID=$BOOT_PARTUUID /boot  vfat umask=0022,shortname=mixed 0 2
 FSTAB
 
   # 3) Networking (DHCP)
@@ -227,10 +227,10 @@ KEY
   apk add openssh-server
   rc-update add sshd default
 
-  # 5) Install kernel & GRUB packages
+  # 5) Install kernel & GRUB
   apk add "$KERNEL_PKG" grub grub-bios
 
-  # 6) Detect actual kernel version
+  # 6) Detect actual kernel version (avoid unset errors)
   echo "INFO: detecting kernel version for $KERNEL_PKG" >&2
   if [ -L "/boot/vmlinuz-$KERNEL_SUFFIX" ]; then
     TARGET=\$(readlink -f "/boot/vmlinuz-$KERNEL_SUFFIX")
@@ -240,7 +240,7 @@ KEY
   fi
   [ -n "\$KERNEL_VERSION" ] || { echo "ERROR: kernel version not found" >&2; exit 1; }
 
-  # 7) Build initramfs (udev, sysroot, ext4 & virtio drivers)
+  # 7) Build initramfs (udev, sysroot, ext4 & virtio)
   mkinitfs \
     -o "/boot/$INITRAMFS_NAME" \
     -k "\$KERNEL_VERSION" \
@@ -248,15 +248,15 @@ KEY
     -t "virtio_blk virtio_scsi virtio_net" \
     || { echo "ERROR: mkinitfs failed" >&2; exit 1; }
 
-  # 8) Install GRUB with shipped modules only
+  # 8) Install GRUB with FAT support
   grub-install \
     --target=i386-pc \
     --boot-directory=/boot \
-    --modules="part_gpt ext2 search_fs_uuid" \
+    --modules="part_gpt fat search_fs_uuid" \
     "$DISK" \
     || { echo "ERROR: grub-install failed" >&2; exit 1; }
 
-  # 9) Write a static grub.cfg (single-line linux stanza)
+  # 9) Write static grub.cfg (one-line linux stanza)
   mkdir -p /boot/grub
   cat > /boot/grub/grub.cfg <<GRUBCFG
 set default=0
@@ -264,7 +264,7 @@ set timeout=2
 
 menuentry "Alpine Linux" {
     insmod part_gpt
-    insmod ext2
+    insmod fat
     insmod search_fs_uuid
     search --no-floppy --fs-uuid --set=root $BOOT_FS_UUID
     linux /$VMLINUZ_NAME root=PARTUUID=$ROOT_PARTUUID ro rootfstype=ext4 modules=ext4 rootdelay=30 quiet
@@ -272,8 +272,8 @@ menuentry "Alpine Linux" {
 }
 GRUBCFG
 
-  # 10) Final sanity checks
-  test -s "/boot/$VMLINUZ_NAME"    || { echo "ERROR: kernel image missing" >&2; exit 1; }
+  # 10) Sanity checks
+  test -s "/boot/$VMLINUZ_NAME"    || { echo "ERROR: kernel missing" >&2; exit 1; }
   test -s "/boot/$INITRAMFS_NAME"  || { echo "ERROR: initramfs missing" >&2; exit 1; }
   grep -q "$BOOT_FS_UUID" /boot/grub/grub.cfg \
       || { echo "ERROR: FS UUID mismatch in grub.cfg" >&2; exit 1; }
