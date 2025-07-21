@@ -202,28 +202,29 @@ done
 cp /etc/resolv.conf "$CHROOT/etc/resolv.conf"
 
 #------------------------------------------------------------------------------
-# 7) In-chroot config & GRUB
+# 7) In-chroot config & static GRUB
 #------------------------------------------------------------------------------
-# Decide on kernel package and grab the PARTUUID on the host
 KERNEL_PKG="linux-virt"
 [ "$ISO_TYPE" = "standard" ] && KERNEL_PKG="linux-lts"
 PARTUUID=$(blkid -s PARTUUID -o value "$PART_ROOT")
 
-LOG "Configuring in chroot and installing GRUB"
-chroot "$CHROOT" /bin/sh -eux <<EOF
-# 1) Repositories
-echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" > /etc/apk/repositories
+LOG "Chroot: install kernel + build full initramfs + write static grub.cfg"
 
-# 2) /etc/fstab
+chroot "$CHROOT" /bin/sh -eux <<EOF
+# 1) repos
+echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" \
+  > /etc/apk/repositories
+
+# 2) fstab
 cat > /etc/fstab <<FSTAB
 $PART_ROOT /      ext4 defaults 0 1
 $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
-# 3) Networking (DHCP)
-IF=\$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -v lo | head -1)
+# 3) networking
+IF=\$(ip -o link show | awk -F': ' '{print \$2}' | grep -v lo | head -1)
 IF=\${IF:-eth0}
-echo "INFO: Using interface '\$IF'" >&2
+echo "INFO: using interface \$IF" >&2
 cat > /etc/network/interfaces <<NETCFG
 auto lo
 iface lo inet loopback
@@ -232,7 +233,7 @@ auto \$IF
 iface \$IF inet dhcp
 NETCFG
 
-# 4) SSH authorized_keys
+# 4) SSH keys
 mkdir -p /root/.ssh
 cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -240,53 +241,43 @@ KEY
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/authorized_keys
 
-# 5) Ensure /etc/default exists
-mkdir -p /etc/default
+# 5) prepare grub dir
+mkdir -p /boot/grub
 
-# 6) Write full GRUB defaults
-cat > /etc/default/grub <<GRUBCFG
-GRUB_DEFAULT=0
-GRUB_TIMEOUT=1
-GRUB_TIMEOUT_STYLE=menu
-GRUB_TERMINAL=console
-GRUB_CMDLINE_LINUX_DEFAULT="rootdelay=30 ro rootfstype=ext4 root=PARTUUID=$PARTUUID quiet"
-GRUB_DISABLE_OS_PROBER=true
-GRUB_DISABLE_SUBMENU=true
-GRUB_GFXPAYLOAD_LINUX=keep
-GRUB_PRELOAD_MODULES="part_gpt part_msdos"
-GRUB_EARLY_INITRD_LINUX="/boot/initramfs-virt"
-GRUBCFG
-
-# 7) Install kernel and generate initramfs (with /sysroot support)
-echo "INFO: Installing kernel package $KERNEL_PKG" >&2
+# 6) install kernel & mkinitfs
+echo "INFO: apk update + apk add \$KERNEL_PKG" >&2
 apk update
-apk add "$KERNEL_PKG"
+apk add "\$KERNEL_PKG"
 
 KVER=\$(ls /lib/modules)
-echo "INFO: Generating initramfs for kernel \$KVER" >&2
-mkinitfs -o /boot/initramfs-virt -k "\$KVER" -f "base modules ext4" \
+echo "INFO: Building full initramfs for \$KVER" >&2
+mkinitfs -o /boot/initramfs-virt -k "\$KVER" \
   || { echo "ERROR: mkinitfs failed" >&2; exit 1; }
 
-# 8) Install GRUB packages
-echo "INFO: Installing GRUB to $DISK" >&2
+# 7) install grub tooling
+echo "INFO: apk add grub grub-bios" >&2
 apk add grub grub-bios
 
-# 9) Install & regenerate GRUB config
-grub-install "$DISK" > /tmp/grub-install.log 2>&1 \
-  || { echo "ERROR: grub-install failed" >&2; cat /tmp/grub-install.log >&2; exit 1; }
-echo "INFO: Generating /boot/grub/grub.cfg" >&2
-grub-mkconfig -o /boot/grub/grub.cfg \
-  || { echo "ERROR: grub-mkconfig failed" >&2; exit 1; }
+# 8) write a static grub.cfg to avoid double-root/UUID confusion
+cat > /boot/grub/grub.cfg <<GRUBCFG
+set default=0
+set timeout=1
 
-# 10) Sanity checks (inside chroot)
+menuentry "Alpine Linux" {
+    linux    /vmlinuz-virt root=PARTUUID=$PARTUUID ro rootfstype=ext4 rootdelay=30 quiet
+    initrd   /boot/initramfs-virt
+}
+GRUBCFG
+
+# 9) sanity check
 test -s /boot/grub/grub.cfg \
-  || { echo "ERROR: GRUB config missing" >&2; exit 1; }
+  || { echo "ERROR: grub.cfg missing!" >&2; exit 1; }
 grep -q "root=PARTUUID=$PARTUUID" /boot/grub/grub.cfg \
-  || { echo "ERROR: PARTUUID missing in grub.cfg" >&2; exit 1; }
-grep -q -E "[[:space:]]*initrd.*initramfs-virt" /boot/grub/grub.cfg \
-  || { echo "ERROR: initrd entry missing in grub.cfg" >&2; exit 1; }
+  || { echo "ERROR: PARTUUID not in grub.cfg" >&2; exit 1; }
+grep -q "initrd   /boot/initramfs-virt" /boot/grub/grub.cfg \
+  || { echo "ERROR: initrd not in grub.cfg" >&2; exit 1; }
 
-echo "INFO: In-chroot GRUB + initramfs build complete" >&2
+echo "INFO: Section 7 complete." >&2
 EOF
 
 #------------------------------------------------------------------------------
