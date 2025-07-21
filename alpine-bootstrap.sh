@@ -277,9 +277,16 @@ grub-mkconfig -o /boot/grub/grub.cfg \
   || { echo "grub-mkconfig failed" >&2; exit 1; }
 
 # 11) Sanity checks
-[ -s /boot/grub/grub.cfg ] || { echo "GRUB config missing!" >&2; exit 1; }
-grep -q "root=PARTUUID=$PARTUUID" /boot/grub/grub.cfg || { echo "PARTUUID not found in grub.cfg" >&2; exit 1; }
-grep -q "initrd /boot/initramfs-virt" /boot/grub/grub.cfg || { echo "initrd not found in grub.cfg" >&2; exit 1; }
+-[ -s /boot/grub/grub.cfg ] || { echo "GRUB config missing!" >&2; exit 1; }
+-grep -q "root=PARTUUID=$PARTUUID" /boot/grub/grub.cfg \
+-  || { echo "PARTUUID not found in grub.cfg" >&2; exit 1; }
+-grep -q "initrd /boot/initramfs-virt" /boot/grub/grub.cfg \
+-  || { echo "initrd not found in grub.cfg" >&2; exit 1; }
++[ -s /boot/grub/grub.cfg ] || { echo "GRUB config missing!" >&2; exit 1; }
++grep -q "root=PARTUUID=$PARTUUID" /boot/grub/grub.cfg \
++  || { echo "PARTUUID not found in grub.cfg" >&2; exit 1; }
++grep -q -E "[[:space:]]*initrd[[:space:]]+/boot/initramfs-virt" /boot/grub/grub.cfg \
++  || { echo "initrd entry not found in grub.cfg" >&2; exit 1; }
 EOF
 
 #------------------------------------------------------------------------------
