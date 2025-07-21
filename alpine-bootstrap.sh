@@ -176,14 +176,14 @@ cp /etc/resolv.conf "$CHROOT/etc/resolv.conf"
 #------------------------------------------------------------------------------
 # 6) Configure the system from within the chroot
 #------------------------------------------------------------------------------
-# Define kernel‐specific variables based on ISO_TYPE
+# Define kernel-specific variables based on ISO_TYPE
 KERNEL_SUFFIX="virt"
 [ "$ISO_TYPE" = "standard" ] && KERNEL_SUFFIX="lts"
 KERNEL_PKG="linux-$KERNEL_SUFFIX"
 VMLINUZ_NAME="vmlinuz-$KERNEL_SUFFIX"
 INITRAMFS_NAME="initramfs-$KERNEL_SUFFIX"
 
-# Host‐side: grab PARTUUIDs and FS UUID
+# Host-side: grab PARTUUIDs and FS UUID
 ROOT_PARTUUID=$(blkid -s PARTUUID -o value "$PART_ROOT")
 BOOT_PARTUUID=$(blkid -s PARTUUID -o value "$PART_BOOT")
 BOOT_FS_UUID=$(blkid -s UUID     -o value "$PART_BOOT")
@@ -194,7 +194,7 @@ BOOT_FS_UUID=$(blkid -s UUID     -o value "$PART_BOOT")
 LOG "Entering chroot to install kernel, initramfs & GRUB"
 
 chroot "$CHROOT" /bin/sh -eux <<EOF
-  # 1) Setup APK repos
+  # 1) Configure APK repos
   cat > /etc/apk/repositories <<REPOS
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
 https://dl-cdn.alpinelinux.org/alpine/latest-stable/community
@@ -218,7 +218,7 @@ auto \$IFACE
 iface \$IFACE inet dhcp
 NETCFG
 
-  # 4) SSH access
+  # 4) SSH setup
   mkdir -p /root/.ssh && chmod 700 /root/.ssh
   cat > /root/.ssh/authorized_keys <<KEY
 $PUBKEY
@@ -227,12 +227,11 @@ KEY
   apk add openssh-server
   rc-update add sshd default
 
-  # 5) Install kernel & GRUB
+  # 5) Install kernel & GRUB packages
   apk add "$KERNEL_PKG" grub grub-bios
 
-  # 6) Detect kernel version (avoid unset errors)
+  # 6) Detect actual kernel version
   echo "INFO: detecting kernel version for $KERNEL_PKG" >&2
-  KERNEL_VERSION=""
   if [ -L "/boot/vmlinuz-$KERNEL_SUFFIX" ]; then
     TARGET=\$(readlink -f "/boot/vmlinuz-$KERNEL_SUFFIX")
     KERNEL_VERSION="\${TARGET##*/vmlinuz-}"
@@ -242,6 +241,7 @@ KEY
   [ -n "\$KERNEL_VERSION" ] || { echo "ERROR: kernel version not found" >&2; exit 1; }
 
   # 7) Build initramfs (sysroot + ext4 + virtio drivers)
+  echo "INFO: building initramfs for \$KERNEL_VERSION" >&2
   mkinitfs \
     -o "/boot/$INITRAMFS_NAME" \
     -k "\$KERNEL_VERSION" \
@@ -249,16 +249,25 @@ KEY
     -t "virtio_blk virtio_scsi virtio_net" \
     || { echo "ERROR: mkinitfs failed" >&2; exit 1; }
 
-  # 8) Install GRUB with explicit module path
+  # 8) Pre-build GRUB core.img with only needed modules
+  echo "INFO: generating core.img with part_gpt, ext4, search_fs_uuid" >&2
+  grub-mkimage \
+    -O i386-pc \
+    -o /boot/grub/core.img \
+    -p /boot/grub \
+    part_gpt ext4 search_fs_uuid normal boot configfile \
+    || { echo "ERROR: grub-mkimage failed" >&2; exit 1; }
+
+  # 9) Install GRUB to disk using that core.img
+  echo "INFO: installing GRUB to $DISK" >&2
   grub-install \
     --target=i386-pc \
     --boot-directory=/boot \
-    --modules-path=/usr/lib/grub/i386-pc \
-    --modules=part_gpt ext4 search_fs_uuid \
+    --core-image=/boot/grub/core.img \
     "$DISK" \
     || { echo "ERROR: grub-install failed" >&2; exit 1; }
 
-  # 9) Write a static grub.cfg (single‐line linux stanza)
+  # 10) Write static grub.cfg (single-line linux stanza)
   mkdir -p /boot/grub
   cat > /boot/grub/grub.cfg <<GRUBCFG
 set default=0
@@ -274,9 +283,10 @@ menuentry "Alpine Linux" {
 }
 GRUBCFG
 
-  # 10) Sanity checks
+  # 11) Final sanity checks
   test -s "/boot/$VMLINUZ_NAME"    || { echo "ERROR: kernel missing" >&2; exit 1; }
   test -s "/boot/$INITRAMFS_NAME"  || { echo "ERROR: initramfs missing" >&2; exit 1; }
+  test -s "/boot/grub/core.img"    || { echo "ERROR: GRUB core.img missing" >&2; exit 1; }
   grep -q "$BOOT_FS_UUID" /boot/grub/grub.cfg \
       || { echo "ERROR: FS UUID mismatch in grub.cfg" >&2; exit 1; }
   grep -q "root=PARTUUID=$ROOT_PARTUUID" /boot/grub/grub.cfg \
