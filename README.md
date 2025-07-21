@@ -1,7 +1,7 @@
 # alpine linux vps bootstrapper (chroot install)
 Script and guide for installing Alpine Linux on VPS or cloud servers without custom-ISO support.
 
-(this is a work in progress, but it does currently boot to a functional shell on Alpine, and will fully work once PARTUUID is resolved)
+(this is a work in progress, but it does currently boot to a functional rescue shell on Alpine)
 
 # why
 VPS providers may lock you into their own images. This script allows you to reimage a disk from friendly GParted Live iso (available on providers like IONOS) into Alpine Linux entirely from a chroot.
