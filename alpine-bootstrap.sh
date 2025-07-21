@@ -212,8 +212,7 @@ PARTUUID=$(blkid -s PARTUUID -o value "$PART_ROOT")
 LOG "Configuring in chroot and installing GRUB"
 chroot "$CHROOT" /bin/sh -eux <<EOF
 # 1) Repositories
-echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" \
-  > /etc/apk/repositories
+echo "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main" > /etc/apk/repositories
 
 # 2) /etc/fstab
 cat > /etc/fstab <<FSTAB
@@ -222,10 +221,7 @@ $PART_BOOT /boot  ext4 defaults 0 2
 FSTAB
 
 # 3) Networking (DHCP)
-IF=\$(ip -o link show 2>/dev/null \
-      | awk -F': ' '{print \$2}' \
-      | grep -v lo \
-      | head -1)
+IF=\$(ip -o link show 2>/dev/null | awk -F': ' '{print \$2}' | grep -v lo | head -1)
 IF=\${IF:-eth0}
 echo "INFO: Using interface '\$IF'" >&2
 cat > /etc/network/interfaces <<NETCFG
@@ -261,12 +257,13 @@ GRUB_PRELOAD_MODULES="part_gpt part_msdos"
 GRUB_EARLY_INITRD_LINUX="/boot/initramfs-virt"
 GRUBCFG
 
-# 7) Install kernel and build initramfs (with modules + ext4 for /sysroot)
-echo "INFO: Installing kernel package \$KERNEL_PKG" >&2
+# 7) Install kernel and generate initramfs (with /sysroot support)
+echo "INFO: Installing kernel package $KERNEL_PKG" >&2
 apk update
-apk add "\$KERNEL_PKG"
+apk add "$KERNEL_PKG"
+
 KVER=\$(ls /lib/modules)
-echo "INFO: Generating initramfs (base+modules+ext4) for \$KVER" >&2
+echo "INFO: Generating initramfs for kernel \$KVER" >&2
 mkinitfs -o /boot/initramfs-virt -k "\$KVER" -f "base modules ext4" \
   || { echo "ERROR: mkinitfs failed" >&2; exit 1; }
 
@@ -274,7 +271,7 @@ mkinitfs -o /boot/initramfs-virt -k "\$KVER" -f "base modules ext4" \
 echo "INFO: Installing GRUB to $DISK" >&2
 apk add grub grub-bios
 
-# 9) Install & generate GRUB config
+# 9) Install & regenerate GRUB config
 grub-install "$DISK" > /tmp/grub-install.log 2>&1 \
   || { echo "ERROR: grub-install failed" >&2; cat /tmp/grub-install.log >&2; exit 1; }
 echo "INFO: Generating /boot/grub/grub.cfg" >&2
